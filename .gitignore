@@ -40,3 +40,6 @@ yarn-error.log*
 CLAUDE.md
 .claude
 *.agents.md
+slopo.db*
+slopo-report/
+slopo.agent.log

@@ -1,248 +1,215 @@
-import { BIP322, ReadonlySingleKey } from '@arkade-os/sdk';
+import { BIP322 } from '@arkade-os/sdk';
+import { UnsupportedOperationError } from '@tetherto/wdk-wallet';
+import { createLnurlClient } from '@arkade-os/lnurl-client';
+import { arkadeLnurl } from '@arkade-os/lnurl-client/arkade';
 import { sodium_memzero } from 'sodium-universal';
-import { calculateOffchainFee } from './lib/fees.js';
-import { quoteSend, send } from './lib/send.js';
+import { createPaymentRouter, send } from './lib/send.js';
+import { withAbort } from './lib/abort.js';
 import { WalletAccountReadOnlyArkade } from './wallet-account-read-only-arkade.js';
 
-/**
- * Full Bitcoin wallet account with Arkade support.
- * Extends the read-only account with signing, sending, and Lightning capabilities.
- */
 export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
   /**
    * @param {string} address
    * @param {string} path
-   * @param {import('@arkade-os/sdk').IWallet} wallet
+   * @param {import('@arkade-os/sdk').Wallet} wallet
    * @param {import('@tetherto/wdk-wallet').KeyPair} keyPair
    * @param {import('@arkade-os/sdk').IndexerProvider} indexerProvider
-   * @param {Promise<import('@arkade-os/sdk').ArkInfo>} arkInfo
-   * @param {import('@arkade-os/boltz-swap').ArkadeSwaps | null} [arkadeSwaps]
+   * @param {Promise<import('@arkade-os/sdk').OperatorInfo>} arkInfo
+   * @param {{ solver?: import('@arkade-os/swap').SwapClient; lnurl?: import('@arkade-os/lnurl-client/arkade').ArkadeLnurlConfig; config?: import('@tetherto/wdk-wallet').WalletConfig }} [services]
    */
-  constructor(address, path, wallet, keyPair, indexerProvider, arkInfo, arkadeSwaps = null) {
-    super(address, wallet, indexerProvider, arkInfo);
+  constructor(address, path, wallet, keyPair, indexerProvider, arkInfo, services = {}) {
+    super(address, wallet, indexerProvider, arkInfo, services.config);
     /** @readonly */
     this.path = path;
     /** @readonly */
     this.index = parseInt(path.split('/').pop() || '0', 10);
-    /** @readonly */
+    /** @readonly @type {import('@tetherto/wdk-wallet').KeyPair} */
     this.keyPair = keyPair;
     /** @readonly */
-    this.arkadeSwaps = arkadeSwaps;
+    this.swapClient = services.solver;
+    /** @private */
+    this._lnurlClient = services.lnurl
+      ? (services.lnurl.client ?? createLnurlClient({ baseUrl: services.lnurl.baseUrl }))
+      : null;
+    this._paymentRouter = createPaymentRouter(wallet, {
+      solver: services.solver,
+      client: this._lnurlClient ?? undefined,
+    });
+    /** @private */
+    this._lnurl = services.lnurl
+      ? arkadeLnurl({
+          ...services.lnurl,
+          wallet,
+          client: this._lnurlClient ?? undefined,
+          router: this._paymentRouter,
+        })
+      : null;
+    if (this._lnurl) {
+      // lnurl-client 0.9.4 otherwise replaces our injected payer transport on first use.
+      this._lnurl.router = () => this._paymentRouter;
+      this._lnurl.options = (target, amount, prefs) =>
+        this._paymentRouter.options(
+          typeof amount === 'number'
+            ? { raw: target.trim(), amount }
+            : { raw: target.trim(), unitAmount: amount },
+          prefs
+        );
+    }
+    /** @private */
+    this._controller = new AbortController();
+    /** @private @type {Set<import('@arkade-os/lnurl-client').LnurlSession>} */
+    this._sessions = new Set();
+    /** @private @type {Set<ReturnType<typeof send>>} */
+    this._payments = new Set();
+    /** @private @type {Promise<void> | undefined} */
+    this._disposePromise = undefined;
   }
 
-  /**
-   * The underlying SDK wallet with full signing capabilities. The base class
-   * types `_wallet` as IReadonlyWallet, but the manager always constructs this
-   * subclass with a concrete `Wallet` (via `Wallet.create`), so we expose the
-   * concrete type — it carries `notifyIncomingFunds`, which the `IWallet`
-   * interface omits.
-   * @private
-   * @returns {import('@arkade-os/sdk').Wallet}
-   */
+  /** @private */
+  _disposeCheck() {
+    if (this.disposed) throw new Error('WalletAccountArkade has been disposed');
+  }
+
+  /** @protected @returns {import('@arkade-os/sdk').Wallet} */
   get _signingWallet() {
+    this._disposeCheck();
     return /** @type {import('@arkade-os/sdk').Wallet} */ (this._wallet);
   }
 
-  /**
-   * @param {import('@tetherto/wdk-wallet').Transaction} tx
-   * @returns {Promise<import('@tetherto/wdk-wallet').TransactionResult>}
-   */
+  /** @param {import('@tetherto/wdk-wallet').Transaction} tx */
   async sendTransaction(tx) {
-    const result = await send({
+    return this._send({
       to: tx.to,
       amount: BigInt(tx.value),
-      wallet: this._signingWallet,
-      arkInfo: this._arkInfo,
-      lightning: this.arkadeSwaps,
+      maxFee: /** @type {number | bigint | undefined} */ (this._config.transactionMaxFee),
     });
-
-    return {
-      hash: result.txid,
-      fee: result.fee,
-    };
   }
 
-  /**
-   * @param {import('@tetherto/wdk-wallet').Transaction} tx
-   * @returns {Promise<Omit<import('@tetherto/wdk-wallet').TransactionResult, 'hash'>>}
-   */
+  /** @param {import('@tetherto/wdk-wallet').Transaction} tx @returns {Promise<{ fee: bigint }>} */
   async quoteSendTransaction(tx) {
-    const estimate = await quoteSend({
-      to: tx.to,
-      amount: BigInt(tx.value),
-      wallet: this._wallet,
-      arkInfo: this._arkInfo,
-      lightning: this.arkadeSwaps,
-    });
-
-    return { fee: estimate.fee };
+    this._disposeCheck();
+    return super.quoteSendTransaction(tx);
   }
 
-  /**
-   * @param {{ token: string; recipient: string; amount: number | bigint }} options
-   * @returns {Promise<import('@tetherto/wdk-wallet').TransferResult>}
-   */
+  /** @param {import('@tetherto/wdk-wallet').TransferOptions} options */
   async transfer(options) {
-    const txid = await this._signingWallet.send({
-      address: options.recipient,
+    return this._send({
+      to: options.recipient,
+      amount: 0n,
       assets: [{ assetId: options.token, amount: BigInt(options.amount) }],
+      maxFee: /** @type {number | bigint | undefined} */ (this._config.transferMaxFee),
     });
-
-    const feeEstimate = await calculateOffchainFee(this._arkInfo);
-    return { hash: txid, fee: feeEstimate.fee };
   }
 
-  /**
-   * @param {string} message
-   * @returns {Promise<string>}
-   */
+  /** @private @param {Omit<import('./lib/send.js').SendOptions, 'router' | 'signal'>} options */
+  async _send(options) {
+    this._disposeCheck();
+    const payment = send({
+      ...options,
+      router: this._paymentRouter,
+      signal: this._controller.signal,
+    });
+    this._payments.add(payment);
+    try {
+      const result = await payment;
+      return { hash: result.txid, fee: result.fee };
+    } finally {
+      this._payments.delete(payment);
+    }
+  }
+
+  /** @param {string} message */
   async sign(message) {
     return BIP322.sign(message, this._signingWallet.identity);
   }
 
-  /**
-   * Subscribe to incoming VTXO notifications.
-   * @param {(coins: import('@arkade-os/sdk').IncomingFunds) => void} callback
-   * @returns {Promise<() => void>}
-   */
+  /** @param {(coins: import('@arkade-os/sdk').IncomingFunds) => void} callback */
   async subscribeToIncomingFunds(callback) {
     return this._signingWallet.notifyIncomingFunds(callback);
   }
 
-  /** @returns {Promise<WalletAccountReadOnlyArkade>} */
   async toReadOnlyAccount() {
-    const publicKey = await this._wallet.identity.compressedPublicKey();
-    const readonlyIdentity = ReadonlySingleKey.fromPublicKey(publicKey);
-    // The full IAssetManager exposes issue/reissue/burn — all signing ops.
-    // Project it down to the IReadonlyAssetManager surface (just
-    // getAssetDetails) so the read-only facade can't sign asset transactions.
-    const readonlyAssetManager = {
-      getAssetDetails: (/** @type {string} */ assetId) =>
-        this._wallet.assetManager.getAssetDetails(assetId),
-    };
-    /** @type {import('@arkade-os/sdk').IReadonlyWallet} */
-    const readonlyWallet = {
-      identity: readonlyIdentity,
-      getAddress: () => this._wallet.getAddress(),
-      getBoardingAddress: () => this._wallet.getBoardingAddress(),
-      getBalance: () => this._wallet.getBalance(),
-      getVtxos: (/** @type {import('@arkade-os/sdk').GetVtxosFilter} */ filter) => this._wallet.getVtxos(filter),
-      getBoardingUtxos: () => this._wallet.getBoardingUtxos(),
-      getTransactionHistory: () => this._wallet.getTransactionHistory(),
-      getContractManager: () => this._wallet.getContractManager(),
-      assetManager: readonlyAssetManager,
-    };
     return new WalletAccountReadOnlyArkade(
-      /** @type {string} */ (this._address),
-      readonlyWallet,
+      await this.getAddress(),
+      await this._signingWallet.toReadonly(),
       this._indexerProvider,
-      this._arkInfo
-    )
+      this._arkInfo,
+      this._config
+    );
+  }
+
+  /** @returns {import('@arkade-os/lnurl-client/arkade').ArkadeLnurl} */
+  getLnurl() {
+    this._disposeCheck();
+    if (!this._lnurl) throw new Error('LNURL receiving requires lnurl.baseUrl in wallet config.');
+    return this._lnurl;
+  }
+
+  /** @returns {import('@arkade-os/lnurl-client').LnurlClient} */
+  getLnurlClient() {
+    this._disposeCheck();
+    if (!this._lnurlClient)
+      throw new Error('LNURL receiving requires lnurl.baseUrl in wallet config.');
+    return this._lnurlClient;
+  }
+
+  /** @param {import('@arkade-os/lnurl-client').SessionHandlers} handlers
+   * @param {import('@arkade-os/lnurl-client').OpenSessionOptions} [options] */
+  async openLnurlSession(handlers, options = {}) {
+    this._disposeCheck();
+    const signal = AbortSignal.any([
+      this._controller.signal,
+      ...(options.signal ? [options.signal] : []),
+    ]);
+    const token = options.token ?? (await this.getLnurl().token());
+    signal.throwIfAborted();
+    const opening = this.getLnurlClient().openSession({ ...options, token, signal }, handlers);
+    void opening.then(
+      (session) => {
+        if (signal.aborted) session.close();
+      },
+      () => {}
+    );
+    const session = await withAbort(opening, signal);
+    signal.throwIfAborted();
+    const close = session.close.bind(session);
+    session.close = () => {
+      this._sessions.delete(session);
+      close();
+    };
+    this._sessions.add(session);
+    return session;
+  }
+
+  get disposed() {
+    return this._disposePromise !== undefined;
+  }
+
+  /** @param {import('@tetherto/wdk-wallet').Transaction} _tx @returns {Promise<string>} */
+  async signTransaction(_tx) {
+    throw new UnsupportedOperationError(
+      'Arkade transactions require sendTransaction for operator cosigning.'
+    );
   }
 
   dispose() {
-    if (this.keyPair.privateKey) {
-      sodium_memzero(this.keyPair.privateKey);
+    if (!this._disposePromise) {
+      this._disposePromise = Promise.resolve().then(async () => {
+        try {
+          for (const session of this._sessions) session.close();
+          this._sessions.clear();
+          await Promise.allSettled(this._payments);
+          await this.swapClient?.[Symbol.asyncDispose]();
+        } finally {
+          try {
+            await /** @type {import('@arkade-os/sdk').Wallet} */ (this._wallet).dispose();
+          } finally {
+            if (this.keyPair.privateKey) sodium_memzero(this.keyPair.privateKey);
+          }
+        }
+      });
+      this._controller.abort(new Error('WalletAccountArkade has been disposed'));
     }
-    void this.arkadeSwaps?.dispose();
-    // Forward-compat: WalletAccountReadOnly currently has no dispose(),
-    // call it if a future base class adds one.
-    // @ts-expect-error super.dispose is not declared on the base class
-    if (typeof super.dispose === 'function') super.dispose();
-  }
-
-  // ==========================================
-  // Lightning Receive Methods
-  // ==========================================
-
-  /**
-   * Create a Lightning invoice to receive payment.
-   * @param {number} amount - Amount in satoshis to receive
-   * @param {string} [description] - Optional description for the invoice
-   * @returns {Promise<{ invoice: string; paymentHash: string }>}
-   */
-  async createLightningInvoice(amount, description) {
-    const swaps = this._requireSwaps();
-    const response = await swaps.createLightningInvoice({ amount, description });
-    return { invoice: response.invoice, paymentHash: response.paymentHash };
-  }
-
-  /**
-   * Wait for an incoming Lightning payment to settle and claim the resulting VTXO.
-   * The invoice must have been created via {@link createLightningInvoice} on this
-   * account so the matching pending reverse swap is in storage. The BOLT11
-   * invoice is stored on `swap.response.invoice`, not at the top level.
-   * @param {string} invoice - BOLT11 invoice previously created via createLightningInvoice
-   * @returns {Promise<{ txid: string }>} The claim transaction id
-   */
-  async waitForLightningPayment(invoice) {
-    const swaps = this._requireSwaps();
-    const pending = await swaps.getPendingReverseSwaps();
-    const swap = pending.find((s) => s.response?.invoice === invoice);
-    if (!swap) {
-      throw new Error(`No pending reverse swap found for invoice ${invoice}`);
-    }
-    return swaps.waitAndClaim(swap);
-  }
-
-  // ==========================================
-  // Lightning Lifecycle Queries
-  // ==========================================
-
-  /**
-   * List pending Lightning receives (reverse swaps awaiting settlement).
-   * @returns {Promise<import('@arkade-os/boltz-swap').PendingReverseSwap[]>}
-   */
-  async getPendingLightningReceives() {
-    return this._requireSwaps().getPendingReverseSwaps();
-  }
-
-  /**
-   * List pending Lightning sends (submarine swaps awaiting settlement).
-   * @returns {Promise<import('@arkade-os/boltz-swap').PendingSubmarineSwap[]>}
-   */
-  async getPendingLightningSends() {
-    return this._requireSwaps().getPendingSubmarineSwaps();
-  }
-
-  /**
-   * Full swap history (reverse + submarine + chain), newest first.
-   * @returns {Promise<(
-   *   import('@arkade-os/boltz-swap').PendingReverseSwap |
-   *   import('@arkade-os/boltz-swap').PendingSubmarineSwap |
-   *   import('@arkade-os/boltz-swap').PendingChainSwap
-   * )[]>}
-   */
-  async getSwapHistory() {
-    return this._requireSwaps().getSwapHistory();
-  }
-
-  /**
-   * Lightning swap min/max limits from the swap provider.
-   * @returns {Promise<import('@arkade-os/boltz-swap').LimitsResponse>}
-   */
-  async getLightningLimits() {
-    return this._requireSwaps().getLimits();
-  }
-
-  /**
-   * Lightning swap fee schedule from the swap provider.
-   * @returns {Promise<import('@arkade-os/boltz-swap').FeesResponse>}
-   */
-  async getLightningFees() {
-    return this._requireSwaps().getFees();
-  }
-
-  /**
-   * @private
-   * @returns {import('@arkade-os/boltz-swap').ArkadeSwaps}
-   */
-  _requireSwaps() {
-    if (!this.arkadeSwaps) {
-      throw new Error(
-        'Lightning support not configured. Provide swapProviderUrl in wallet config.'
-      );
-    }
-    return this.arkadeSwaps;
+    return this._disposePromise;
   }
 }

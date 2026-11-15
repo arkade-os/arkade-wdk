@@ -1,124 +1,98 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository.
+Guidance for coding agents working in this repository. Also follow
+`C:\Users\evilk\.claude\CLAUDE.md`.
 
-## 1) Purpose and Current Scope
+Before continuing existing work, selectively search
+`C:/Users/evilk/agent-context/catalogs/plans-laptop.jsonl` and
+`C:/Users/evilk/agent-context/catalogs/context-laptop.jsonl` for this repository,
+goal, and decisions. Read the selected plan/spec, memory, and latest handoff;
+check capture timestamps. The catalogs' `README.md` explains archive paths.
 
-- This repo's primary package is `@arkade-os/wdk`, a WDK-compatible Bitcoin wallet adapter on top of `@arkade-os/sdk`.
-- It supports Arkade + optional Lightning (`@arkade-os/boltz-swap`) and exports utility helpers (`src/lib/*`).
-- Submodules under `packages/` and `examples/` are local development surfaces for RN integration and validation.
-- Current state: the RN example is the integration playground, but it does not yet route Bitcoin through `@arkade-os/wdk` by default.
+When interacting with Cloudflare, use `cf` unless the project has Wrangler config.
 
-## 2) Repository Map
+## Package and source
 
-- Root adapter:
-  - `src/wallet-manager-arkade.ts`
-  - `src/wallet-account-arkade.ts`
-  - `src/lib/*`
-  - `src/index.ts`
-- Build output:
-  - `dist/` (generated, ignored by git)
-- Dev tooling:
-  - `scripts/setup-dev.js`
-- Submodules:
-  - `packages/pear-wrk-wdk`
-  - `packages/wdk-react-native-provider`
-  - `examples/wdk-starter-react-native`
+- The root package is `@arkade-os/wdk`, a WDK-compatible Bitcoin wallet adapter.
+- Source is JavaScript ESM with JSDoc types, checked by TypeScript. Target ES2022;
+  runtime Node.js `>=22.13.0 <27`.
+- `src/wallet-manager-arkade.js` derives and caches SDK wallets per account path.
+- `src/wallet-account-arkade.js` implements signing, sending, and LNURL receiving.
+- `src/wallet-account-read-only-arkade.js` implements query and quote methods.
+- `src/lib/send.js` composes SDK, swap, and LNURL payment rails.
+- `src/index.js` exports the manager and two account classes. `src/lib/*` is internal.
+- `npm run build:types` generates declarations in ignored `types/`. There is no
+  root JavaScript build or dev/watch script.
 
-## 3) Runtime Dependency Flow (Important)
+## Shared package boundaries
 
-Current RN path:
+- Use `@arkade-os/sdk` payment rails, fee helpers, wallet helpers, and readonly
+  conversion instead of duplicating their implementation.
+- Use `@arkade-os/lnurl-client` and its `/arkade` facade for LNURL payer and receiver
+  operations. Receiver registration is explicit; account creation must not claim
+  names or allocate receivers.
+- Use `@arkade-os/swap` for solver discovery, signed card validation, Nostr RFQ,
+  persistence, and recovery. `nostr-tools` provides the default Nostr transport.
+- Solver configuration requires a caller-supplied persistent repository per
+  account path. Do not introduce an in-memory fallback for active swaps.
+- Boltz support has been removed. Do not restore its dependency, configuration, or
+  legacy account methods.
+- Keep accepted/funded payments attached to the chosen client and solver. Do not
+  fail over after payment execution begins.
+- Preserve the WDK send `{ hash, fee }` and quote `{ fee }` shapes and bigint fees.
+- Readonly accounts must not acquire signing identities or payment execution APIs.
+- Await disposal in tests and callers that require completed teardown.
 
-1. `examples/wdk-starter-react-native` uses `@tetherto/wdk-react-native-provider`.
-2. `@tetherto/wdk-react-native-provider` uses `@tetherto/pear-wrk-wdk`.
-3. `@tetherto/pear-wrk-wdk` resolves Bitcoin via `@wdk/wallet-btc`.
+## Verification
 
-Implication:
+```bash
+npm install
+npm run lint
+npm test
+npm run build:types
+```
 
-- Editing `@arkade-os/wdk` alone does not automatically affect the RN example behavior yet.
-- If you are asked to validate `@arkade-os/wdk` behavior in-app, plan an explicit integration step in the submodules.
+- Tests use `node:test`; there is no Jest setup dependency.
+- Lint runs ESLint and `tsc --noEmit` over checked JavaScript.
+- Add meaningful tests for payment validation, lifecycle changes, and trust
+  boundaries. Never skip failing tests to make a gate pass.
+- SDK and LNURL package versions may change independently; verify published
+  declarations rather than relying on old API names or repository docs.
+- Use Slopo when requested or when a configured repository requires it; review
+  real duplication rather than treating every similarity as a defect.
 
-## 4) Setup and Daily Commands
+## Coding conventions
 
-Root package:
+- Two spaces, single quotes, semicolons, print width 100.
+- Preserve `.js` extensions in relative ESM imports.
+- No unused variables; unused arguments may start with `_`.
+- Prefer deleting superseded protocol code to introducing another abstraction.
+- Keep README and generated public declarations aligned with actual behavior.
 
-- Install: `npm install`
-- Build: `npm run build`
-- Watch: `npm run dev`
-- Lint: `npm run lint`
-- Format: `npm run format`
-- Test: `npm test`
+## React Native submodules and patches
 
-Full local workspace (root + submodules + links):
+Independent repositories:
 
-- `npm run setup:dev`
+- `packages/pear-wrk-wdk`
+- `packages/wdk-react-native-provider`
+- `examples/wdk-starter-react-native`
 
-Note:
+The provider/worklet integration is maintained through `patches/`. A root change
+does not prove that a native app uses it: inspect current dependency wiring and
+links before claiming in-app validation.
 
-- `scripts/setup-dev.js` still references `@wdk/bare` naming in link commands/messages while the submodule package is `@tetherto/pear-wrk-wdk`. Treat setup results as "best effort" and verify links explicitly when needed.
+Before editing a submodule, check root and submodule `git status --short`, fetch
+its remote, and check branch freshness as required by the global instructions.
+Preserve existing dirty work. Submodule changes are separate deliverables from
+root adapter changes.
 
-## 5) Known Issues / Footguns
+`npm run setup:dev` initializes submodules, applies patches, installs dependencies,
+and links local packages. Verify its results explicitly. Use
+`node scripts/apply-patches.js --check` to check patches and
+`node scripts/generate-patches.js` after editing a submodule. Build affected
+packages, re-link as needed, and run the example's available checks plus Android
+or iOS validation before making native runtime claims.
 
-- Jest config references `src/__tests__/setup.ts`, but that file is currently missing; `npm test` fails on config validation until fixed.
-- `getFeeRates()` in `WalletManagerArkade` returns placeholder values (`0n`/`0n`).
-- `WalletAccountArkade.initialize()` is currently a no-op.
-- Several convenience methods historically documented are not implemented on `WalletAccountArkade` yet (see `README.md` TODO section).
-- Running install/setup inside submodules may update lockfiles and leave submodules dirty; this is expected during local development.
-
-## 6) Submodule Workflow Expectations
-
-- Submodules are independent git repositories.
-- Treat changes in each submodule as separate deliverables:
-  - `packages/pear-wrk-wdk` PR
-  - `packages/wdk-react-native-provider` PR
-  - `examples/wdk-starter-react-native` PR (if required)
-- Do not assume root commits can include upstream submodule code changes.
-- Before editing, check:
-  - `git status --short` at root
-  - `git -C <submodule> status --short` in each submodule you touch
-
-## 7) Coding Standards
-
-- Language/runtime:
-  - TypeScript, Node ESM (`"type": "module"`)
-  - Target ES2022
-- Formatting:
-  - 2 spaces
-  - single quotes
-  - semicolons enabled
-  - print width 100
-- Linting:
-  - `@typescript-eslint` rules are enabled
-  - no unused vars (except args prefixed with `_`)
-- Keep imports/exports ESM-compatible and preserve `.js` extension style in source imports where already used.
-
-## 8) Recommended Verification Matrix
-
-For root-only adapter changes:
-
-1. `npm run build`
-2. `npm run lint`
-3. Optional targeted runtime check via a small local script or consumer test harness
-
-For RN integration changes (submodules):
-
-1. Build relevant package(s) in `packages/*`
-2. Re-link dependencies if needed
-3. Run example app checks in `examples/wdk-starter-react-native`:
-   - `npm run typecheck` (if available in that submodule)
-   - `npm run android` or `npm run ios` for manual validation
-
-## 9) Change Strategy Guidance
-
-- Prefer minimal, reversible changes.
-- Keep README/API docs synchronized with real implementation state (no aspirational APIs without explicit TODO labels).
-- If behavior is intentionally not implemented yet, mark it clearly in docs and/or code comments with concrete TODO scope.
-- If a task touches root adapter + submodule runtime wiring, separate commits by repository boundary.
-
-## 10) Quick Checklist Before Hand-off
-
-- Root build passes (`npm run build`).
-- Any known expected failures (like current Jest config issue) are called out explicitly.
-- Docs updated for any API/behavior changes.
-- `git status --short` is reviewed at root and in touched submodules.
-- No accidental lockfile churn committed unless intentionally part of the change.
+Review root and touched-submodule status before handoff. Include only intentional
+dependency and lockfile changes, report verification limits, and keep plans/specs
+outside commits unless explicitly requested.

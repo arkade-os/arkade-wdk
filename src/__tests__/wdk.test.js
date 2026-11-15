@@ -10,11 +10,16 @@ import WdkManager from '@tetherto/wdk';
 import WalletManagerArkade from '../wallet-manager-arkade.js';
 import { WalletAccountReadOnlyArkade } from '../wallet-account-read-only-arkade.js';
 import { WalletAccountArkade } from '../wallet-account-arkade.js';
-import { WalletAccountReadOnly } from '@tetherto/wdk-wallet';
-import { Wallet } from '@arkade-os/sdk';
+import { NoSuchElementError, WalletAccountReadOnly } from '@tetherto/wdk-wallet';
+import { ArkAddress, ReadonlySingleKey, SingleKey, Wallet } from '@arkade-os/sdk';
 
 const validSeedPhrase =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+const recipient = new ArkAddress(
+  new Uint8Array(32).fill(1),
+  new Uint8Array(32).fill(2),
+  'testnet'
+).encode();
 
 // Stub arkProvider so constructing WalletManagerArkade never fires a real fetch
 const stubArkProvider = {
@@ -80,8 +85,8 @@ describe('Asset Support', () => {
         Promise.resolve({
           total: 100000,
           assets: [
-            { assetId: 'asset-aaa', amount: 500 },
-            { assetId: 'asset-bbb', amount: 1200 },
+            { assetId: 'asset-aaa', amount: 500n },
+            { assetId: 'asset-bbb', amount: 1200n },
           ],
         })
       ),
@@ -109,22 +114,22 @@ describe('Asset Support', () => {
       mockWallet,
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      mockArkInfo,
-      null
+      mockArkInfo
     );
 
     const result = await account.transfer({
       token: 'asset-aaa',
-      recipient: 'ark1recipient',
+      recipient,
       amount: 100n,
     });
 
     assert.deepEqual(mockSend.mock.calls[0].arguments[0], {
-      address: 'ark1recipient',
+      address: recipient,
+      amount: 330,
       assets: [{ assetId: 'asset-aaa', amount: 100n }],
     });
     assert.equal(result.hash, 'txid-abc123');
-    assert.equal(result.fee, 300n); // 150 vB * 2 sat/vB
+    assert.equal(result.fee, 0n);
   });
 
   it('subscribeToIncomingFunds delegates to wallet notifyIncomingFunds', async () => {
@@ -139,8 +144,7 @@ describe('Asset Support', () => {
       mockWallet,
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      Promise.resolve({}),
-      null
+      Promise.resolve({})
     );
     const callback = mock.fn();
 
@@ -151,18 +155,18 @@ describe('Asset Support', () => {
     assert.equal(result, unsubscribe);
   });
 
-  it('quoteTransfer returns offchain fee estimate', async () => {
+  it('quoteTransfer uses the SDK asset rail without spending', async () => {
     const mockArkInfo = Promise.resolve({ fees: { txFeeRate: '2' } });
 
     const account = new WalletAccountReadOnlyArkade('ark1testaddress', {}, {}, mockArkInfo);
 
     const result = await account.quoteTransfer({
       token: 'asset-aaa',
-      recipient: 'ark1recipient',
+      recipient,
       amount: 500n,
     });
 
-    assert.equal(result.fee, 300n); // 150 vB * 2 sat/vB
+    assert.equal(result.fee, 0n);
   });
 });
 
@@ -186,8 +190,7 @@ describe('Base class conformance', () => {
       {},
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      Promise.resolve({}),
-      null
+      Promise.resolve({})
     );
 
     assert.equal(account.path, "m/86'/0'/0'/0/5");
@@ -195,41 +198,98 @@ describe('Base class conformance', () => {
     assert.ok(account.keyPair.publicKey instanceof Uint8Array);
   });
 
-  it('dispose securely erases private key', () => {
+  it('dispose securely erases private key', async () => {
     const privateKey = new Uint8Array(32);
     privateKey.fill(0xab);
 
     const account = new WalletAccountArkade(
       'ark1testaddress',
       "m/86'/0'/0'/0/0",
+      { dispose: async () => {} },
+      { publicKey: new Uint8Array(33), privateKey },
       {},
+      Promise.resolve({})
+    );
+
+    await account.dispose();
+    assert.ok(privateKey.every((b) => b === 0));
+  });
+
+  it('drains solver work before erasing the key and disposes only once', async () => {
+    let finish;
+    const stopped = new Promise((resolve) => {
+      finish = resolve;
+    });
+    const stop = mock.fn(() => stopped);
+    const solver = { [Symbol.asyncDispose]: stop };
+    const privateKey = new Uint8Array(32).fill(0xab);
+    const account = new WalletAccountArkade(
+      'ark1testaddress',
+      "m/86'/0'/0'/0/0",
+      { dispose: async () => {} },
       { publicKey: new Uint8Array(33), privateKey },
       {},
       Promise.resolve({}),
-      null
+      { solver }
     );
 
-    account.dispose();
+    const disposing = account.dispose();
+    assert.ok(privateKey.every((b) => b === 0xab));
+    finish();
+    await disposing;
+    await account.dispose();
+
+    assert.equal(stop.mock.callCount(), 1);
     assert.ok(privateKey.every((b) => b === 0));
   });
 });
 
+describe('WDK transaction finality', () => {
+  function accountWithHistory(history) {
+    return new WalletAccountReadOnlyArkade(
+      'ark1testaddress',
+      { getTransactionHistory: mock.fn(async () => history) },
+      {},
+      Promise.resolve({})
+    );
+  }
+
+  it('finds transactions by any SDK history key and uses settlement for finality', async () => {
+    const account = accountWithHistory([
+      { key: { arkTxid: 'ark-tx', commitmentTxid: 'commitment-tx' }, settled: true },
+    ]);
+
+    assert.deepEqual(await account.getTransaction('ark-tx'), {
+      hash: 'ark-tx',
+      finality: 'confirmed',
+    });
+    assert.deepEqual(await account.getTransaction('commitment-tx'), {
+      hash: 'commitment-tx',
+      finality: 'confirmed',
+    });
+  });
+
+  it('keeps an unsettled SDK transaction pending without inferring success or failure', async () => {
+    const account = accountWithHistory([
+      { key: { arkTxid: 'pending-tx' }, settled: false, success: false },
+    ]);
+
+    assert.deepEqual(await account.getTransaction('pending-tx'), {
+      hash: 'pending-tx',
+      finality: 'pending',
+    });
+  });
+
+  it('rejects an unknown transaction with the WDK missing-element error', async () => {
+    await assert.rejects(accountWithHistory([]).getTransaction('unknown'), NoSuchElementError);
+  });
+});
+
 describe('toReadOnlyAccount isolation', () => {
-  /**
-   * Mock signing wallet that exposes every method on IWallet — including
-   * the signing surface — so the test can verify which of them survive the
-   * projection into the read-only facade.
-   */
   function makeSigningWalletMock() {
-    const pubkey = new Uint8Array(33).fill(0xee);
-    return {
-      identity: {
-        compressedPublicKey: () => Promise.resolve(pubkey),
-        // Real signing identities expose .key (the 32-byte secret) and .sign.
-        // The read-only projection must not surface either of these.
-        key: new Uint8Array(32).fill(0xaa),
-        sign: mock.fn(() => Promise.reject(new Error('should not be reachable'))),
-      },
+    const identity = SingleKey.fromPrivateKey(new Uint8Array(32).fill(1));
+    const wallet = {
+      identity,
       send: mock.fn(() => Promise.reject(new Error('should not be reachable'))),
       sendBitcoin: mock.fn(() => Promise.reject(new Error('should not be reachable'))),
       settle: mock.fn(() => Promise.reject(new Error('should not be reachable'))),
@@ -247,6 +307,18 @@ describe('toReadOnlyAccount isolation', () => {
         burn: mock.fn(() => Promise.reject(new Error('should not be reachable'))),
       },
     };
+    wallet.toReadonly = mock.fn(async () => ({
+      identity: ReadonlySingleKey.fromPublicKey(await identity.compressedPublicKey()),
+      getAddress: wallet.getAddress,
+      getBoardingAddress: wallet.getBoardingAddress,
+      getBalance: wallet.getBalance,
+      getVtxos: wallet.getVtxos,
+      getBoardingUtxos: wallet.getBoardingUtxos,
+      getTransactionHistory: wallet.getTransactionHistory,
+      getContractManager: wallet.getContractManager,
+      assetManager: { getAssetDetails: wallet.assetManager.getAssetDetails },
+    }));
+    return wallet;
   }
 
   it('returns a WalletAccountReadOnlyArkade instance', async () => {
@@ -257,14 +329,15 @@ describe('toReadOnlyAccount isolation', () => {
       wallet,
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      Promise.resolve({}),
-      null
+      Promise.resolve({})
     );
 
     const readonly = await account.toReadOnlyAccount();
 
     assert.ok(readonly instanceof WalletAccountReadOnlyArkade);
     assert.ok(readonly instanceof WalletAccountReadOnly);
+    assert.equal(wallet.toReadonly.mock.callCount(), 1);
+    assert.equal(readonly._wallet, await wallet.toReadonly.mock.calls[0].result);
   });
 
   it('facade does not expose signing methods', async () => {
@@ -275,8 +348,7 @@ describe('toReadOnlyAccount isolation', () => {
       wallet,
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      Promise.resolve({}),
-      null
+      Promise.resolve({})
     );
 
     const readonly = await account.toReadOnlyAccount();
@@ -295,14 +367,17 @@ describe('toReadOnlyAccount isolation', () => {
       wallet,
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      Promise.resolve({}),
-      null
+      Promise.resolve({})
     );
 
     const readonly = await account.toReadOnlyAccount();
     const identity = /** @type {Record<string, unknown>} */ (readonly._wallet.identity);
 
-    assert.notEqual(identity, wallet.identity, 'must be a fresh ReadonlySingleKey, not the signing identity');
+    assert.notEqual(
+      identity,
+      wallet.identity,
+      'must be a fresh ReadonlySingleKey, not the signing identity'
+    );
     assert.equal(identity.key, undefined, 'must not expose the .key secret bytes');
     assert.equal(typeof identity.sign, 'undefined', 'must not expose a .sign method');
   });
@@ -315,8 +390,7 @@ describe('toReadOnlyAccount isolation', () => {
       wallet,
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      Promise.resolve({}),
-      null
+      Promise.resolve({})
     );
 
     const readonly = await account.toReadOnlyAccount();
@@ -336,8 +410,7 @@ describe('toReadOnlyAccount isolation', () => {
       wallet,
       { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
       {},
-      Promise.resolve({}),
-      null
+      Promise.resolve({})
     );
 
     const readonly = await account.toReadOnlyAccount();
@@ -394,6 +467,15 @@ describe('Per-account wallet isolation', () => {
 
     assert.equal(first, second, 'same index must return the same cached account');
     assert.equal(walletCreateMock.mock.callCount(), 1, 'Wallet.create called only once');
+  });
+
+  it('rejects named signer accounts before wallet creation', async () => {
+    makeMockWallet();
+    const manager = new WalletManagerArkade(validSeedPhrase, { arkProvider: stubArkProvider });
+
+    await assert.rejects(manager.getAccount('external-signer'), /seed-derived/i);
+    assert.equal(walletCreateMock.mock.callCount(), 0);
+    await manager.dispose();
   });
 
   it('dispose calls wallet.dispose() for each created wallet', async () => {

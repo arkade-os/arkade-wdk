@@ -1,8 +1,8 @@
 diff --git a/.env.example b/.env.example
-index fe78808..eedde75 100644
+index fe78808..33c3c40 100644
 --- a/.env.example
 +++ b/.env.example
-@@ -1,4 +1,19 @@
+@@ -1,4 +1,16 @@
  EXPO_PUBLIC_WDK_INDEXER_BASE_URL=https://wdk-api.tether.io
  EXPO_PUBLIC_WDK_INDEXER_API_KEY=PUT_WDK_API_KEY_HERE
  EXPO_PUBLIC_TRON_API_KEY=PUT_HERE
@@ -21,9 +21,6 @@ index fe78808..eedde75 100644
 +# Esplora REST endpoint used by the RN-side balance workaround for
 +# on-chain BTC boarding deposits. Override for regtest / mutinynet.
 +EXPO_PUBLIC_ESPLORA_URL=https://blockstream.info/api
-+# Boltz swap provider URL. Required for Lightning send/receive.
-+# Use https://api.boltz.exchange for mainnet or https://api.testnet.boltz.exchange for testnet.
-+EXPO_PUBLIC_BOLTZ_SWAP_URL=https://api.boltz.exchange
 diff --git a/app.json b/app.json
 index c2f76ee..91c1e4f 100644
 --- a/app.json
@@ -6576,10 +6573,10 @@ index 8025f1b..5ced777 100644
  
      // Sort transactions by timestamp (newest first) and calculate fiat values
 diff --git a/src/app/receive/details.tsx b/src/app/receive/details.tsx
-index 0ac6e1c..72b53ad 100644
+index 0ac6e1c..cdc3d45 100644
 --- a/src/app/receive/details.tsx
 +++ b/src/app/receive/details.tsx
-@@ -1,25 +1,90 @@
+@@ -1,25 +1,101 @@
  import { QRCode } from '@tetherto/wdk-uikit-react-native';
  import { useLocalSearchParams } from 'expo-router';
  import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
@@ -6605,7 +6602,7 @@ index 0ac6e1c..72b53ad 100644
    const insets = useSafeAreaInsets();
    const router = useDebouncedNavigation();
    const params = useLocalSearchParams();
-+  const { createLightningInvoice, balances } = useWallet();
++  const { createLightningInvoice, getLnurlReceiver, balances } = useWallet();
  
 -  const { tokenName, networkName, address } = params as {
 +  const { tokenName, networkName, address, addresslessReceive } = params as {
@@ -6619,7 +6616,6 @@ index 0ac6e1c..72b53ad 100644
 +
 +  // Lightning invoice state
 +  const [invoiceAmount, setInvoiceAmount] = useState('');
-+  const [invoiceDescription, setInvoiceDescription] = useState('');
 +  const [generatedInvoice, setGeneratedInvoice] = useState('');
 +  const [isGenerating, setIsGenerating] = useState(false);
 +
@@ -6631,7 +6627,7 @@ index 0ac6e1c..72b53ad 100644
 +    }
 +    setIsGenerating(true);
 +    try {
-+      const result = await createLightningInvoice(sats, invoiceDescription || undefined);
++      const result = await createLightningInvoice(sats);
 +      setGeneratedInvoice(result.invoice);
 +      toast.success('Invoice created');
 +    } catch (err: any) {
@@ -6639,7 +6635,19 @@ index 0ac6e1c..72b53ad 100644
 +    } finally {
 +      setIsGenerating(false);
 +    }
-+  }, [invoiceAmount, invoiceDescription, createLightningInvoice]);
++  }, [invoiceAmount, createLightningInvoice]);
++
++  const handleCreateLnurl = useCallback(async () => {
++    setIsGenerating(true);
++    try {
++      const receiver = await getLnurlReceiver();
++      setGeneratedInvoice(receiver.lnurl);
++    } catch (err: any) {
++      toast.error(err?.message || 'Failed to create LNURL');
++    } finally {
++      setIsGenerating(false);
++    }
++  }, [getLnurlReceiver]);
 +
 +  // Detect incoming Arkade payment by watching the balance map.
 +  // The wallet-context auto-refreshes via notifyIncomingFunds SSE.
@@ -6674,7 +6682,7 @@ index 0ac6e1c..72b53ad 100644
    const handleBack = useCallback(() => {
      router.back();
    }, [router]);
-@@ -30,25 +95,31 @@ export default function ReceiveQRCodeScreen() {
+@@ -30,25 +106,31 @@ export default function ReceiveQRCodeScreen() {
    }, [router]);
  
    const handleCopyAddress = useCallback(async () => {
@@ -6702,9 +6710,9 @@ index 0ac6e1c..72b53ad 100644
 -        message: `${tokenName} Address (${networkName}): ${address}`,
 -        title: `${tokenName} Receive Address`,
 +        message: isLightning
-+          ? `Lightning Invoice: ${text}`
++          ? `Lightning payment request: ${text}`
 +          : `${tokenName} Address (${networkName}): ${text}`,
-+        title: isLightning ? 'Lightning Invoice' : `${tokenName} Receive Address`,
++        title: isLightning ? 'Lightning payment request' : `${tokenName} Receive Address`,
        });
      } catch (error) {
 -      console.error('Error sharing address:', error);
@@ -6715,7 +6723,7 @@ index 0ac6e1c..72b53ad 100644
  
    return (
      <View style={[styles.container, { paddingTop: insets.top }]}>
-@@ -64,47 +135,104 @@ export default function ReceiveQRCodeScreen() {
+@@ -64,47 +146,105 @@ export default function ReceiveQRCodeScreen() {
        </View>
  
        <View style={styles.content}>
@@ -6749,22 +6757,22 @@ index 0ac6e1c..72b53ad 100644
 -          </View>
 -
 -          <View style={styles.buttonsContainer}>
--            <TouchableOpacity
+             <TouchableOpacity
 -              style={[styles.actionButton, styles.copyButton]}
 -              onPress={handleCopyAddress}
--              activeOpacity={0.7}
--            >
--              <Copy size={20} color={colors.white} />
--              <Text style={styles.actionButtonText}>Copy</Text>
--            </TouchableOpacity>
--
-             <TouchableOpacity
--              style={[styles.actionButton, styles.shareButton]}
--              onPress={handleShareAddress}
 +              style={[styles.actionButton, styles.copyButton, { marginTop: 32, width: '100%', flex: 0 }]}
 +              onPress={handleClose}
                activeOpacity={0.7}
              >
+-              <Copy size={20} color={colors.white} />
+-              <Text style={styles.actionButtonText}>Copy</Text>
+-            </TouchableOpacity>
+-
+-            <TouchableOpacity
+-              style={[styles.actionButton, styles.shareButton]}
+-              onPress={handleShareAddress}
+-              activeOpacity={0.7}
+-            >
 -              <Share size={20} color={colors.white} />
 -              <Text style={styles.actionButtonText}>Share</Text>
 +              <Text style={styles.actionButtonText}>Go to wallet</Text>
@@ -6796,13 +6804,6 @@ index 0ac6e1c..72b53ad 100644
 +                  value={invoiceAmount}
 +                  onChangeText={setInvoiceAmount}
 +                />
-+                <TextInput
-+                  style={[styles.lightningInput, { marginTop: 12 }]}
-+                  placeholder="Description (optional)"
-+                  placeholderTextColor={colors.textTertiary}
-+                  value={invoiceDescription}
-+                  onChangeText={setInvoiceDescription}
-+                />
 +                <TouchableOpacity
 +                  style={[styles.actionButton, styles.copyButton, { marginTop: 24, width: '100%', flex: 0 }]}
 +                  onPress={handleCreateInvoice}
@@ -6813,12 +6814,20 @@ index 0ac6e1c..72b53ad 100644
 +                    {isGenerating ? 'Creating...' : 'Create Invoice'}
 +                  </Text>
 +                </TouchableOpacity>
++                <TouchableOpacity
++                  style={[styles.actionButton, styles.shareButton, { marginTop: 12, width: '100%', flex: 0 }]}
++                  onPress={handleCreateLnurl}
++                  disabled={isGenerating}
++                  activeOpacity={0.7}
++                >
++                  <Text style={styles.actionButtonText}>Create reusable LNURL</Text>
++                </TouchableOpacity>
 +              </View>
 +            ) : (
 +              <>
 +                <QRCode
 +                  value={displayAddress || 'empty'}
-+                  label={isLightning ? 'Lightning Invoice' : 'Scan QR code'}
++                  label={isLightning ? 'Lightning payment request' : 'Scan QR code'}
 +                  size={200}
 +                  color={colors.primary}
 +                  containerStyle={styles.qrSection}
@@ -6855,7 +6864,7 @@ index 0ac6e1c..72b53ad 100644
        </View>
      </View>
    );
-@@ -153,6 +281,51 @@ const styles = StyleSheet.create({
+@@ -153,6 +293,51 @@ const styles = StyleSheet.create({
      lineHeight: 28,
      textAlign: 'left',
    },
@@ -7288,21 +7297,19 @@ index 7a86eaf..401926e 100644
    usdt: {
      name: 'USD₮',
 diff --git a/src/config/get-chains-config.ts b/src/config/get-chains-config.ts
-index 0a8e71a..3fa33df 100644
+index 0a8e71a..2b5fc03 100644
 --- a/src/config/get-chains-config.ts
 +++ b/src/config/get-chains-config.ts
-@@ -62,6 +62,15 @@ const getChainsConfig = () => {
+@@ -62,6 +62,13 @@ const getChainsConfig = () => {
        host: 'api.ordimint.com',
        port: 50001,
      },
 +    arkade: {
 +      // arkServerUrl is the only required field. indexerUrl defaults to
 +      // arkServerUrl if omitted. esploraUrl enables boarding-balance display (Phase 5).
-+      // swapProviderUrl is required for Lightning send/receive.
 +      arkServerUrl: process.env.EXPO_PUBLIC_ARKADE_SERVER_URL!,
 +      indexerUrl: process.env.EXPO_PUBLIC_ARKADE_INDEXER_URL,
 +      esploraUrl: process.env.EXPO_PUBLIC_ESPLORA_URL,
-+      swapProviderUrl: process.env.EXPO_PUBLIC_BOLTZ_SWAP_URL,
 +    },
      tron: {
        chainId: 3448148188,

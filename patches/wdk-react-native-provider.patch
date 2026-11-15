@@ -1,5 +1,5 @@
 diff --git a/package.json b/package.json
-index fd6fc94..ea59d93 100644
+index fd6fc94..aa5a321 100644
 --- a/package.json
 +++ b/package.json
 @@ -40,8 +40,8 @@
@@ -13,24 +13,29 @@ index fd6fc94..ea59d93 100644
    },
    "keywords": [
      "react-native",
+@@ -108,7 +108,12 @@
+     "react-native-url-polyfill": "^2.0.0",
+     "sodium-javascript": "^0.8.0",
+     "stream-browserify": "^3.0.0",
+-    "stream-http": "^3.2.0"
++    "stream-http": "^3.2.0",
++    "@arkade-os/sdk": "0.5.6",
++    "@arkade-os/swap": "0.1.6",
++    "@arkade-os/lnurl-client": "0.9.4",
++    "expo-crypto": "~15.0.9",
++    "expo-sqlite": "~16.0.10"
+   },
+   "packageManager": "npm@10.9.0",
+   "jest": {
 diff --git a/src/contexts/types.ts b/src/contexts/types.ts
-index aa13609..dc7a3f5 100644
+index aa13609..981e605 100644
 --- a/src/contexts/types.ts
 +++ b/src/contexts/types.ts
-@@ -37,6 +37,31 @@ export interface WalletContextType extends WalletContextState {
+@@ -37,6 +37,18 @@ export interface WalletContextType extends WalletContextState {
    refreshWalletBalance: () => Promise<void>;
    refreshTransactions: () => Promise<void>;
    unlockWallet: () => Promise<boolean | undefined>;
 +
-+  // ==========================================
-+  // Arkade-specific surface (Phase 2.9)
-+  //
-+  // These delegate to WDKService and through to the worklet's arkade* RPC
-+  // routes. Complex shapes are returned as `unknown` — UI consumers narrow
-+  // them with their own types since the upstream PendingSwap shape is large
-+  // and the provider intentionally doesn't import @arkade-os/boltz-swap on
-+  // the RN side.
-+  // ==========================================
 +  getBoardingAddress: (index?: number) => Promise<string>;
 +  createLightningInvoice: (
 +    amount: number,
@@ -40,17 +45,13 @@ index aa13609..dc7a3f5 100644
 +  getPendingLightningReceives: (index?: number) => Promise<unknown[]>;
 +  getPendingLightningSends: (index?: number) => Promise<unknown[]>;
 +  getSwapHistory: (index?: number) => Promise<unknown[]>;
-+  getLightningLimits: (index?: number) => Promise<unknown>;
-+  getLightningFees: (index?: number) => Promise<unknown>;
-+  waitForLightningPayment: (
-+    invoice: string,
-+    index?: number
-+  ) => Promise<{ txid: string }>;
++  getSwapMarkets: (index?: number) => Promise<unknown[]>;
++  getLnurlReceiver: () => Promise<{ lnurl: string; lightningAddress?: string }>;
  }
  
  // Provider configuration
 diff --git a/src/contexts/wallet-context.tsx b/src/contexts/wallet-context.tsx
-index 4c3dff5..dd8018d 100644
+index 4c3dff5..9978676 100644
 --- a/src/contexts/wallet-context.tsx
 +++ b/src/contexts/wallet-context.tsx
 @@ -64,6 +64,20 @@ export function WalletProvider({
@@ -84,7 +85,7 @@ index 4c3dff5..dd8018d 100644
    const value: WalletContextType = {
      ...state,
      createWallet,
-@@ -392,6 +409,18 @@ export function WalletProvider({
+@@ -392,6 +409,16 @@ export function WalletProvider({
      refreshWalletBalance,
      refreshTransactions,
      unlockWallet,
@@ -96,15 +97,13 @@ index 4c3dff5..dd8018d 100644
 +    getPendingLightningSends: (index) =>
 +      WDKService.getPendingLightningSends(index),
 +    getSwapHistory: (index) => WDKService.getSwapHistory(index),
-+    getLightningLimits: (index) => WDKService.getLightningLimits(index),
-+    getLightningFees: (index) => WDKService.getLightningFees(index),
-+    waitForLightningPayment: (invoice, index) =>
-+      WDKService.waitForLightningPayment(invoice, index),
++    getSwapMarkets: (index) => WDKService.getSwapMarkets(index),
++    getLnurlReceiver: () => WDKService.getLnurlReceiver(),
    };
  
    return (
 diff --git a/src/services/wdk-service/index.ts b/src/services/wdk-service/index.ts
-index 5ae8528..4f2b542 100644
+index 5ae8528..0840104 100644
 --- a/src/services/wdk-service/index.ts
 +++ b/src/services/wdk-service/index.ts
 @@ -13,6 +13,7 @@ import {
@@ -294,7 +293,7 @@ index 5ae8528..4f2b542 100644
  
        // Note: We keep this.wdkManager and this.secretManager references intact
        // as the worklets are still running and can be reused
-@@ -205,6 +351,109 @@ class WDKService {
+@@ -205,6 +351,80 @@ class WDKService {
      }
    }
  
@@ -312,71 +311,42 @@ index 5ae8528..4f2b542 100644
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
 +      const WalletManagerArkade = require('@arkade-os/wdk').default;
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
-+      const { ExpoArkProvider, ExpoIndexerProvider } = require('@arkade-os/sdk/adapters/expo');
++      const { ExpoOperatorProvider, ExpoIndexerProvider } = require('@arkade-os/sdk/adapters/expo');
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
 +      const { SQLiteWalletRepository, SQLiteContractRepository } = require('@arkade-os/sdk/repositories/sqlite');
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
 +      const SQLite = require('expo-sqlite');
++      const { SQLiteAssetSwapRepository } = require('@arkade-os/swap/repositories/sqlite');
++      const { createLnurlClient } = require('@arkade-os/lnurl-client');
++      const { fetch: expoFetch } = require('expo/fetch');
++      const Crypto = require('expo-crypto');
++      const walletNamespace = await Crypto.digestStringAsync('SHA-256', seedPhrase.normalize('NFKD'));
 +      const db = SQLite.openDatabaseSync('arkade-wallet.db');
 +      const executor = {
-+        run: (sql: string, params?: any[]) => db.runAsync(sql, params ?? []),
-+        get: (sql: string, params?: any[]) => db.getFirstAsync(sql, params ?? []),
++        run: async (sql: string, params?: any[]) => { await db.runAsync(sql, params ?? []); },
++        get: async (sql: string, params?: any[]) => (await db.getFirstAsync(sql, params ?? [])) ?? undefined,
 +        all: (sql: string, params?: any[]) => db.getAllAsync(sql, params ?? []),
 +      };
 +      const indexerUrl = arkadeConfig.indexerUrl || arkadeConfig.arkServerUrl;
 +
-+      // Build a SQLite-backed swap repository so ArkadeSwaps doesn't
-+      // default to IndexedDbSwapRepository (which isn't available on RN).
-+      // The schema is trivial: one table with id + type + JSON blob.
-+      await executor.run(
-+        `CREATE TABLE IF NOT EXISTS arkade_swaps (
-+          id TEXT PRIMARY KEY,
-+          type TEXT NOT NULL,
-+          status TEXT,
-+          createdAt INTEGER,
-+          data TEXT NOT NULL
-+        )`
-+      );
-+      const swapRepository = {
-+        version: 1 as const,
-+        async saveSwap(swap: any) {
-+          await executor.run(
-+            `INSERT OR REPLACE INTO arkade_swaps (id, type, status, createdAt, data)
-+             VALUES (?, ?, ?, ?, ?)`,
-+            [swap.id, swap.type, swap.status, swap.createdAt, JSON.stringify(swap)]
-+          );
-+        },
-+        async deleteSwap(id: string) {
-+          await executor.run('DELETE FROM arkade_swaps WHERE id = ?', [id]);
-+        },
-+        async getAllSwaps(filter?: any) {
-+          const rows: any[] = await executor.all('SELECT data FROM arkade_swaps ORDER BY createdAt DESC');
-+          let swaps = rows.map((r: any) => JSON.parse(r.data));
-+          if (filter?.id) {
-+            const ids = Array.isArray(filter.id) ? filter.id : [filter.id];
-+            swaps = swaps.filter((s: any) => ids.includes(s.id));
-+          }
-+          if (filter?.type) {
-+            const types = Array.isArray(filter.type) ? filter.type : [filter.type];
-+            swaps = swaps.filter((s: any) => types.includes(s.type));
-+          }
-+          if (filter?.status) {
-+            const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-+            swaps = swaps.filter((s: any) => statuses.includes(s.status));
-+          }
-+          return swaps;
-+        },
-+        async clear() {
-+          await executor.run('DELETE FROM arkade_swaps');
-+        },
-+        async [Symbol.asyncDispose]() { /* no-op */ },
-+      };
++      const operatorProvider = new ExpoOperatorProvider(arkadeConfig.arkServerUrl);
++      const { network } = await operatorProvider.getInfo();
++      const lnurl = arkadeConfig.lnurl ?? (network === 'bitcoin'
++        ? { baseUrl: 'https://lnurl.arkade.sh', domain: 'arkade.money' }
++        : network === 'mutinynet'
++          ? { baseUrl: 'https://lnurl.mutinynet.arkade.sh', domain: 'lnurl.mutinynet.arkade.sh' }
++          : undefined);
 +
 +      this.arkadeManager = new WalletManagerArkade(seedPhrase, {
 +        ...arkadeConfig,
-+        arkProvider: new ExpoArkProvider(arkadeConfig.arkServerUrl),
++        operatorProvider,
 +        indexerProvider: new ExpoIndexerProvider(indexerUrl),
-+        swapRepository,
++        solver: (path: string) => ({
++          repository: new SQLiteAssetSwapRepository(executor, {
++            prefix: `arkade_v2_${walletNamespace}_${path.replace(/[^a-zA-Z0-9]/g, '_')}_`,
++          }),
++        }),
++        lnurl: lnurl ? { ...lnurl, client: createLnurlClient({ baseUrl: lnurl.baseUrl, fetchImpl: expoFetch }) } : undefined,
 +        storage: {
 +          walletRepository: new SQLiteWalletRepository(executor),
 +          contractRepository: new SQLiteContractRepository(executor),
@@ -384,7 +354,7 @@ index 5ae8528..4f2b542 100644
 +      });
 +      this.arkadeAccount = await this.arkadeManager.getAccount(0);
 +
-+      // Subscribe to incoming funds — the SDK uses SSE (via ExpoArkProvider)
++      // Subscribe to incoming funds — the SDK uses SSE (via ExpoOperatorProvider)
 +      // to detect new VTXOs in real-time. When funds arrive, fire the
 +      // balance listeners so the wallet-context auto-refreshes.
 +      try {
@@ -404,7 +374,7 @@ index 5ae8528..4f2b542 100644
    // WDK API Methods
    async createSeed(params: {
      prf: Buffer | ArrayBuffer | string;
-@@ -359,6 +608,14 @@ class WDKService {
+@@ -359,6 +579,14 @@ class WDKService {
          network: toNetwork(network),
          accountIndex: index,
        });
@@ -419,7 +389,7 @@ index 5ae8528..4f2b542 100644
      } else {
        return await this.wdkManager.getAbstractedAddress({
          network: toNetwork(network),
-@@ -375,6 +632,7 @@ class WDKService {
+@@ -375,6 +603,7 @@ class WDKService {
        throw new Error('WDK Manager not initialized');
      }
  
@@ -427,7 +397,7 @@ index 5ae8528..4f2b542 100644
      const addressPromises = [];
      const networkAddresses: Partial<Record<NetworkType, string>> = {};
      const addressesArr = [];
-@@ -382,9 +640,28 @@ class WDKService {
+@@ -382,9 +611,28 @@ class WDKService {
      for (const asset of enabledAssets) {
        for (const networkType of Object.keys(AssetAddressMap[asset])) {
          addressesArr.push({ [networkType]: null });
@@ -459,7 +429,7 @@ index 5ae8528..4f2b542 100644
        }
      }
  
-@@ -395,18 +672,22 @@ class WDKService {
+@@ -395,18 +643,22 @@ class WDKService {
          // @ts-expect-error
          networkAddresses[key] = (addresses[i] as any).value.address;
        } else {
@@ -488,7 +458,7 @@ index 5ae8528..4f2b542 100644
  
      return networkAddresses;
    }
-@@ -432,6 +713,16 @@ class WDKService {
+@@ -432,6 +684,16 @@ class WDKService {
            },
          });
  
@@ -505,7 +475,7 @@ index 5ae8528..4f2b542 100644
          return Number(quote.fee) / this.getDenominationValue(AssetTicker.BTC);
        } else if (
          [
-@@ -520,6 +811,16 @@ class WDKService {
+@@ -520,6 +782,16 @@ class WDKService {
        });
  
        return response;
@@ -522,7 +492,7 @@ index 5ae8528..4f2b542 100644
      } else if (
        [
          NetworkType.ETHEREUM,
-@@ -571,6 +872,91 @@ class WDKService {
+@@ -571,6 +843,89 @@ class WDKService {
      }
    }
  
@@ -543,46 +513,44 @@ index 5ae8528..4f2b542 100644
 +    return await this.arkadeAccount.getBoardingAddress();
 +  }
 +
-+  async createLightningInvoice(
-+    amount: number,
-+    description?: string,
-+    _index: number = 0
-+  ): Promise<{ invoice: string; paymentHash: string }> {
-+    if (!this.arkadeAccount) throw new Error('Arkade wallet not initialized');
-+    return await this.arkadeAccount.createLightningInvoice(amount, description);
++  private requireArkadeSwapClient(): any {
++    if (!this.arkadeAccount?.swapClient) throw new Error('Arkade solver swaps not initialized');
++    return this.arkadeAccount.swapClient;
++  }
++
++  async createLightningInvoice(amount: number, _description?: string, _index: number = 0): Promise<{ invoice: string; paymentHash: string }> {
++    if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Enter a positive whole number of sats');
++    if (_description) throw new Error('Solver invoices do not support custom descriptions');
++    const swap = await this.requireArkadeSwapClient().receive({ via: 'lightning', amount: BigInt(amount) });
++    return { invoice: swap.artifact.bolt11, paymentHash: swap.lock.hash };
 +  }
 +
 +  async getPendingLightningReceives(_index: number = 0): Promise<unknown[]> {
-+    if (!this.arkadeAccount) return [];
-+    return await this.arkadeAccount.getPendingLightningReceives();
++    const swaps = await this.requireArkadeSwapClient().swaps();
++    return swaps.filter((swap: any) => swap.route.give.corridor === 'lightning' &&
++      !['claimed', 'paid', 'filled', 'cancelled', 'refunded', 'lapsed', 'failed'].includes(swap.outcome));
 +  }
 +
 +  async getPendingLightningSends(_index: number = 0): Promise<unknown[]> {
-+    if (!this.arkadeAccount) return [];
-+    return await this.arkadeAccount.getPendingLightningSends();
++    const swaps = await this.requireArkadeSwapClient().swaps();
++    return swaps.filter((swap: any) => swap.route.take.corridor === 'lightning' &&
++      !['claimed', 'paid', 'filled', 'cancelled', 'refunded', 'lapsed', 'failed'].includes(swap.outcome));
 +  }
 +
 +  async getSwapHistory(_index: number = 0): Promise<unknown[]> {
-+    if (!this.arkadeAccount) return [];
-+    return await this.arkadeAccount.getSwapHistory();
++    return this.requireArkadeSwapClient().swaps();
 +  }
 +
-+  async getLightningLimits(_index: number = 0): Promise<unknown> {
-+    if (!this.arkadeAccount) return {};
-+    return await this.arkadeAccount.getLightningLimits();
++  async getSwapMarkets(_index: number = 0): Promise<unknown[]> {
++    return this.requireArkadeSwapClient().markets();
 +  }
 +
-+  async getLightningFees(_index: number = 0): Promise<unknown> {
-+    if (!this.arkadeAccount) return {};
-+    return await this.arkadeAccount.getLightningFees();
-+  }
-+
-+  async waitForLightningPayment(
-+    invoice: string,
-+    _index: number = 0
-+  ): Promise<{ txid: string }> {
++  async getLnurlReceiver(): Promise<{ lnurl: string; lightningAddress?: string }> {
 +    if (!this.arkadeAccount) throw new Error('Arkade wallet not initialized');
-+    return await this.arkadeAccount.waitForLightningPayment(invoice);
++    const { bootstrapReceiver } = require('@arkade-os/lnurl-client/arkade');
++    const result = await bootstrapReceiver(this.arkadeAccount.getLnurl(), { autoClaimNameless: true, refresh: true });
++    if (result.kind !== 'ready') throw new Error('This LNURL service requires address registration');
++    return { lnurl: result.receiver.lnurl, lightningAddress: result.receiver.lightningAddress };
 +  }
 +
 +  async getArkadeTransactionHistory(_index: number = 0): Promise<Transaction[]> {
@@ -614,7 +582,7 @@ index 5ae8528..4f2b542 100644
    async createWallet(params: {
      walletName: string;
      prf: Buffer | string;
-@@ -613,6 +999,8 @@ class WDKService {
+@@ -613,6 +968,8 @@ class WDKService {
        data: wallet,
      });
  
@@ -623,7 +591,7 @@ index 5ae8528..4f2b542 100644
      return wallet;
    }
  
-@@ -637,6 +1025,14 @@ class WDKService {
+@@ -637,6 +994,14 @@ class WDKService {
      const transactionMap: Record<string, Transaction[]> = {};
      const payloadKeys: string[] = []; // Track the keys in order to match with response array
  
@@ -638,7 +606,7 @@ index 5ae8528..4f2b542 100644
      enabledAssets.forEach((asset) => {
        const networks = AssetBalanceMap[asset];
        if (!networks) return;
-@@ -645,6 +1041,10 @@ class WDKService {
+@@ -645,6 +1010,10 @@ class WDKService {
          const key = `${networkType}_${asset}`;
          transactionMap[key] = [];
  
@@ -649,7 +617,7 @@ index 5ae8528..4f2b542 100644
          const address = networkAddresses[networkType as NetworkType];
  
          if (address) {
-@@ -659,6 +1059,31 @@ class WDKService {
+@@ -659,6 +1028,31 @@ class WDKService {
        });
      });
  
@@ -681,7 +649,7 @@ index 5ae8528..4f2b542 100644
      const requestOptions = {
        method: 'POST',
        headers: headers,
-@@ -699,6 +1124,10 @@ class WDKService {
+@@ -699,6 +1093,10 @@ class WDKService {
        }
      >
    > {
@@ -692,7 +660,7 @@ index 5ae8528..4f2b542 100644
      const headers = new Headers();
      headers.append('accept', 'application/json');
      headers.append('x-api-key', this.getIndexerApiKey());
-@@ -715,6 +1144,9 @@ class WDKService {
+@@ -715,6 +1113,9 @@ class WDKService {
        if (!networks) return;
  
        Object.keys(networks).forEach((networkType) => {
@@ -702,7 +670,7 @@ index 5ae8528..4f2b542 100644
          const address = networkAddresses[networkType as NetworkType];
          if (address) {
            payload.push({
-@@ -726,6 +1158,38 @@ class WDKService {
+@@ -726,6 +1127,38 @@ class WDKService {
        });
      });
  
@@ -741,7 +709,7 @@ index 5ae8528..4f2b542 100644
      const requestOptions = {
        method: 'POST',
        headers: headers,
-@@ -743,14 +1207,22 @@ class WDKService {
+@@ -743,14 +1176,22 @@ class WDKService {
  
      const data = await response.json();
  
@@ -766,13 +734,12 @@ index 5ae8528..4f2b542 100644
          allBalances[`${obj.blockchain}_${obj.token}`] = {
            balance: parseFloat(obj.amount),
            asset: obj.token as AssetTicker,
-@@ -759,8 +1231,33 @@ class WDKService {
+@@ -759,8 +1200,33 @@ class WDKService {
        },
        {} as Record<string, { balance: number; asset: AssetTicker }>
      );
 +  }
- 
--    return balanceMap;
++
 +  async resolveArkadeBalances(
 +    enabledAssets: AssetTicker[],
 +    _networkAddresses: Partial<Record<NetworkType, string>>
@@ -787,7 +754,8 @@ index 5ae8528..4f2b542 100644
 +      try {
 +        const denom = this.getDenominationValue(AssetTicker.BTC);
 +        const balance = Number(await this.arkadeAccount.getBalance()) / denom;
-+
+
+-    return balanceMap;
 +        result[`${NetworkType.ARKADE}_${asset}`] = { balance, asset };
 +        if (NetworkType.LIGHTNING in networks) {
 +          result[`${NetworkType.LIGHTNING}_${asset}`] = { balance, asset };
@@ -802,7 +770,7 @@ index 5ae8528..4f2b542 100644
  }
  
 diff --git a/src/services/wdk-service/types.ts b/src/services/wdk-service/types.ts
-index 6663b0e..6e96528 100644
+index 6663b0e..1ebc57d 100644
 --- a/src/services/wdk-service/types.ts
 +++ b/src/services/wdk-service/types.ts
 @@ -7,6 +7,8 @@ export enum AssetTicker {
@@ -850,7 +818,7 @@ index 6663b0e..6e96528 100644
    },
    [AssetTicker.USDT]: {
      [NetworkType.ETHEREUM]: 'ethereum',
-@@ -113,6 +134,31 @@ export interface BitcoinChainConfig {
+@@ -113,6 +134,29 @@ export interface BitcoinChainConfig {
    port: number;
  }
  
@@ -874,15 +842,13 @@ index 6663b0e..6e96528 100644
 +   *  be set explicitly. */
 +  indexerUrl?: string;
 +  esploraUrl?: string;
-+  /** Boltz swap provider URL. Required for Lightning send/receive support.
-+   *  When omitted, Lightning transactions will throw "Lightning support not configured". */
-+  swapProviderUrl?: string;
++  lnurl?: { baseUrl: string; domain?: string };
 +}
 +
  export interface TronChainConfig {
    chainId: number;
    provider: string;
-@@ -133,5 +179,6 @@ export interface ChainsConfig {
+@@ -133,5 +177,6 @@ export interface ChainsConfig {
    polygon?: EVMChainConfig;
    ton?: TONChainConfig;
    bitcoin?: BitcoinChainConfig;

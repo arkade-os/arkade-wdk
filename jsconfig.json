@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["ES2022", "DOM", "ESNext.Disposable"],
     "module": "Node16",
     "moduleResolution": "node16",
     "checkJs": true,
@@ -8,9 +9,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
-      "sodium-universal": ["src/types/sodium-universal.d.ts"]
+      "sodium-universal": ["./src/types/sodium-universal.d.ts"]
     }
   },
   "include": ["src/**/*.js", "src/**/*.d.ts"],
