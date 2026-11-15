@@ -15,7 +15,7 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
    * @param {import('@tetherto/wdk-wallet').KeyPair} keyPair
    * @param {import('@arkade-os/sdk').IndexerProvider} indexerProvider
    * @param {Promise<import('@arkade-os/sdk').OperatorInfo>} arkInfo
-   * @param {{ solver?: import('@arkade-os/swap').SwapClient; lnurl?: import('@arkade-os/lnurl-client/arkade').ArkadeLnurlConfig; config?: import('@tetherto/wdk-wallet').WalletConfig }} [services]
+   * @param {{ solver?: import('@arkade-os/swap').SwapClient; lnurl?: import('@arkade-os/lnurl-client/arkade').ArkadeLnurlConfig; config?: import('@tetherto/wdk-wallet').WalletConfig & { paymentTimeoutMs?: number } }} [services]
    */
   constructor(address, path, wallet, keyPair, indexerProvider, arkInfo, services = {}) {
     super(address, wallet, indexerProvider, arkInfo, services.config);
@@ -59,13 +59,13 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
     this._controller = new AbortController();
     /** @private @type {Set<import('@arkade-os/lnurl-client').LnurlSession>} */
     this._sessions = new Set();
-    /** @private @type {Set<ReturnType<typeof send>>} */
+    /** @private @type {Set<Promise<unknown>>} */
     this._payments = new Set();
     /** @private @type {Promise<void> | undefined} */
     this._disposePromise = undefined;
   }
 
-  /** @private */
+  /** @protected */
   _disposeCheck() {
     if (this.disposed) throw new Error('WalletAccountArkade has been disposed');
   }
@@ -101,13 +101,19 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
     });
   }
 
-  /** @private @param {Omit<import('./lib/send.js').SendOptions, 'router' | 'signal'>} options */
+  /** @private @param {Omit<import('./lib/send.js').SendOptions, 'router' | 'signal' | 'trackCompletion'>} options */
   async _send(options) {
     this._disposeCheck();
     const payment = send({
       ...options,
       router: this._paymentRouter,
+      paymentTimeoutMs: /** @type {number | undefined} */ (this._config.paymentTimeoutMs),
       signal: this._controller.signal,
+      trackCompletion: (completion) => {
+        this._payments.add(completion);
+        const forget = () => this._payments.delete(completion);
+        void completion.then(forget, forget);
+      },
     });
     this._payments.add(payment);
     try {
@@ -198,7 +204,8 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
         try {
           for (const session of this._sessions) session.close();
           this._sessions.clear();
-          await Promise.allSettled(this._payments);
+          // A caller timeout does not cancel its native payment.
+          while (this._payments.size) await Promise.allSettled(this._payments);
           await this.swapClient?.[Symbol.asyncDispose]();
         } finally {
           try {

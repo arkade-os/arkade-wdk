@@ -118,13 +118,16 @@ class WalletManagerArkade extends WalletManager {
     try {
       wallet = await Wallet.create({
         ...cfg,
-        service: undefined,
-        operatorProvider: this._arkProvider,
-        indexerProvider:
-          cfg.indexerProvider ?? (this._url ? new RestIndexerProvider(this._url) : undefined),
+        ...(cfg.service
+          ? {}
+          : {
+              operatorProvider: this._arkProvider,
+              indexerProvider:
+                cfg.indexerProvider ?? (this._url ? new RestIndexerProvider(this._url) : undefined),
+            }),
         identity: SingleKey.fromPrivateKey(key.privateKey),
         // Bare has no IndexedDB; persistent repositories can be injected.
-        storage: cfg.storage ?? {
+        storage: (typeof cfg.storage === 'function' ? cfg.storage(path) : cfg.storage) ?? {
           walletRepository: new InMemoryWalletRepository(),
           contractRepository: new InMemoryContractRepository(),
         },
@@ -156,6 +159,7 @@ class WalletManagerArkade extends WalletManager {
           config: {
             transactionMaxFee: cfg.transactionMaxFee,
             transferMaxFee: cfg.transferMaxFee,
+            paymentTimeoutMs: cfg.paymentTimeoutMs,
           },
         }
       );

@@ -14,6 +14,8 @@
   "scripts": {
     "test": "node --test src/__tests__/*.test.js",
     "test:watch": "node --test --watch src/__tests__/*.test.js",
+    "test:e2e": "node --experimental-eventsource --test test/e2e/*.test.js",
+    "test:e2e:sample": "node --experimental-eventsource test/e2e/sample-service.mjs",
     "typecheck": "tsc -p jsconfig.json --noEmit",
     "build:types": "node scripts/build-types.js",
     "prepublishOnly": "npm run build:types",

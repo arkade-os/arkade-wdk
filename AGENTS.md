@@ -1,13 +1,8 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository. Also follow
-`C:\Users\evilk\.claude\CLAUDE.md`.
-
-Before continuing existing work, selectively search
-`C:/Users/evilk/agent-context/catalogs/plans-laptop.jsonl` and
-`C:/Users/evilk/agent-context/catalogs/context-laptop.jsonl` for this repository,
-goal, and decisions. Read the selected plan/spec, memory, and latest handoff;
-check capture timestamps. The catalogs' `README.md` explains archive paths.
+Guidance for coding agents working in this repository. Also follow applicable
+user-level instructions and selectively consult available project plans and
+handoffs before continuing existing work.
 
 When interacting with Cloudflare, use `cf` unless the project has Wrangler config.
 

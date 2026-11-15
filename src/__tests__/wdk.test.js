@@ -171,6 +171,12 @@ describe('Asset Support', () => {
 });
 
 describe('Base class conformance', () => {
+  it('disposes a readonly SDK view once so its watchers can close', async () => {
+    const dispose = mock.fn(async () => {});
+    const account = new WalletAccountReadOnlyArkade('ark1readonly', { dispose }, {}, Promise.resolve({}));
+    await Promise.all([account.dispose(), account.dispose()]);
+    assert.equal(dispose.mock.callCount(), 1);
+  });
   it('read-only account extends WalletAccountReadOnly', () => {
     const account = new WalletAccountReadOnlyArkade('ark1testaddress', {}, {}, Promise.resolve({}));
 
@@ -220,7 +226,9 @@ describe('Base class conformance', () => {
     const stopped = new Promise((resolve) => {
       finish = resolve;
     });
-    const stop = mock.fn(() => stopped);
+    let markStopStarted;
+    const stopStarted = new Promise((resolve) => { markStopStarted = resolve; });
+    const stop = mock.fn(() => { markStopStarted(); return stopped; });
     const solver = { [Symbol.asyncDispose]: stop };
     const privateKey = new Uint8Array(32).fill(0xab);
     const account = new WalletAccountArkade(
@@ -234,6 +242,7 @@ describe('Base class conformance', () => {
     );
 
     const disposing = account.dispose();
+    await stopStarted;
     assert.ok(privateKey.every((b) => b === 0xab));
     finish();
     await disposing;

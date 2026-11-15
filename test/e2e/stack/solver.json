@@ -1,0 +1,32 @@
+{
+  "network": "regtest",
+  "name": "wdk-e2e",
+  "rails": {
+    "arkade": {
+      "mnemonic": "planet travel grab found idle ripple acoustic hero normal mixed rich lamp",
+      "operatorUrl": "http://arkd:7070",
+      "emulatorUrl": "http://emulator:7073",
+      "esploraUrl": "http://mempool_web/api",
+      "unilateralExitDelay": 512,
+      "covclaimdUrl": "http://covclaimd:7071"
+    },
+    "lightning": {
+      "backend": "lnd",
+      "lnd": {
+        "socket": "lnd:10009",
+        "certPath": "/lnd/tls.cert",
+        "macaroonPath": "/lnd/data/chain/bitcoin/regtest/admin.macaroon"
+      },
+      "lockupTimeoutSeconds": 900
+    },
+    "onchain": { "esploraUrl": "http://mempool_web/api", "chainTipEsploraUrl": "http://mempool_web/api" }
+  },
+  "limits": { "maxSwapSats": 100000, "maxExposedSats": 1000000, "approvalThresholdSats": 1000000 },
+  "corridors": {
+    "arkade:BTC->lightning:BTC": { "enabled": true, "minSats": 1000, "maxSats": 100000, "feeBps": 50, "feeFlatSats": 0 },
+    "lightning:BTC->arkade:BTC": { "enabled": true, "minSats": 1000, "maxSats": 100000, "feeBps": 50, "feeFlatSats": 0 }
+  },
+  "relay": { "url": "wss://nostr-tls", "protocol": "nostr", "healthPath": "/data/relay-health", "adPublish": "auto", "cardRelays": ["wss://nostr-tls", "wss://localhost:57033"] },
+  "storage": { "dir": "/data", "swapDb": "/data/swaps.sqlite", "walletDb": "/data/ark.sqlite" },
+  "admin": { "host": "0.0.0.0", "port": 8788, "allowedHosts": ["localhost", "127.0.0.1", "intent-solver", "wdk-e2e-intent-solver"] }
+}

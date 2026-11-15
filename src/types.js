@@ -14,8 +14,10 @@
 
 /**
  * @typedef {import('@tetherto/wdk-wallet').WalletConfig &
- *   Omit<import('@arkade-os/sdk').WalletConfig, 'identity'> & {
+ *   Omit<import('@arkade-os/sdk').WalletConfig, 'identity' | 'storage'> & {
  *     arkServerUrl?: string,
+ *     paymentTimeoutMs?: number,
+ *     storage?: import('@arkade-os/sdk').StorageConfig | ((path: string) => import('@arkade-os/sdk').StorageConfig),
  *     solver?: (path: string) => SolverConfig,
  *     lnurl?: import('@arkade-os/lnurl-client/arkade').ArkadeLnurlConfig
  *   }} ArkadeWalletConfig

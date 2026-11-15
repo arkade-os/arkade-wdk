@@ -3,9 +3,9 @@ index 3931ba9..e8d61c6 100644
 --- a/index.js
 +++ b/index.js
 @@ -25,9 +25,18 @@
- 
+
  /** @typedef {import('./src/wdk-core/wdk-manager.js').TransferConfig} TransferConfig */
- 
+
 -export { WdkManager, Blockchain } from './src/wdk-core/wdk-manager.js'
 +// Note: WdkManager and Blockchain intentionally NOT re-exported from this
 +// entry point. They live in src/wdk-core/wdk-manager.js, which runs INSIDE
@@ -17,11 +17,11 @@ index 3931ba9..e8d61c6 100644
 +// directly via require('../src/wdk-core/wdk-manager') in wdk-worklet.js,
 +// so this only affects RN-side consumers — none of which actually use
 +// WdkManager (they only need HRPC).
- 
+
 -// Export spec/hrpc
 +// Export spec/hrpc — this is what the React Native provider imports.
  export { default as HRPC } from './spec/hrpc'
- 
+
  // Export spec/schema
 diff --git a/pack.imports.json b/pack.imports.json
 index bcaef0c..02cdc5b 100644
@@ -124,11 +124,15 @@ index 1ba00ef..07a906d 100644
        "dependencies": {
          "@noble/curves": "1.9.2",
 diff --git a/package.json b/package.json
-index 83a4a5c..63bd445 100644
+index 83a4a5c..5247d9f 100644
 --- a/package.json
 +++ b/package.json
-@@ -6,8 +6,8 @@
-     "build:types": "rimraf *.d.ts **/*.d.ts; tsc",
+@@ -3,13 +3,14 @@
+   "version": "1.0.0-beta.4",
+   "main": "index.js",
+   "scripts": {
+-    "build:types": "rimraf *.d.ts **/*.d.ts; tsc",
++    "build:types": "rimraf --glob \"*.d.ts\" \"src/**/*.d.ts\" \"spec/**/*.d.ts\" && tsc",
      "lint": "standard",
      "lint:fix": "standard --fix",
 -    "gen:macos-bundle": "npx bare-pack --target darwin-arm64 --linked --out bundle/wdk-worklet.bundle.js src/wdk-worklet.js",
@@ -136,20 +140,24 @@ index 83a4a5c..63bd445 100644
 +    "gen:macos-bundle": "npx bare-pack@1 --target darwin-arm64 --linked --out bundle/wdk-worklet.bundle.js src/wdk-worklet.js",
 +    "gen:mobile-bundle": "npx bare-pack@1 --target ios-arm64 --target ios-arm64-simulator --target ios-x64-simulator --target android-arm --target android-arm64 --target android-ia32 --target android-x64 --linked --imports ./pack.imports.json --out bundle/wdk-worklet.mobile.bundle.js src/wdk-worklet.js",
      "gen:schema": "node src/schema/schema.js",
-     "postinstall": "npm run gen:mobile-bundle"
+-    "postinstall": "npm run gen:mobile-bundle"
++    "postinstall": "npm run gen:mobile-bundle",
++    "test:hrpc": "node --test test/hrpc-compat.test.cjs"
    },
+   "dependencies": {
+     "@wdk/wallet": "https://github.com/tetherto/wdk-wallet#integration-rn-starter",
 diff --git a/spec/hrpc/hrpc.json b/spec/hrpc/hrpc.json
-index 23079ea..8a231d4 100644
+index 23079ea..e92d2f5 100644
 --- a/spec/hrpc/hrpc.json
 +++ b/spec/hrpc/hrpc.json
 @@ -1,5 +1,5 @@
  {
 -  "version": 1,
-+  "version": 2,
++  "version": 4,
    "schema": [
      {
        "id": 0,
-@@ -187,6 +187,97 @@
+@@ -187,6 +187,149 @@
          "send": true
        },
        "version": 1
@@ -221,13 +229,26 @@ index 23079ea..8a231d4 100644
 +    },
 +    {
 +      "id": 20,
-+      "name": "@wdk-core/arkadeGetSwapMarkets",
++      "name": "@wdk-core/arkadeGetLightningLimits",
 +      "request": {
-+        "name": "@wdk-core/arkadeGetSwapMarkets-request",
++        "name": "@wdk-core/arkadeGetLightningLimits-request",
 +        "stream": false
 +      },
 +      "response": {
-+        "name": "@wdk-core/arkadeGetSwapMarkets-response",
++        "name": "@wdk-core/arkadeGetLightningLimits-response",
++        "stream": false
++      },
++      "version": 2
++    },
++    {
++      "id": 21,
++      "name": "@wdk-core/arkadeGetLightningFees",
++      "request": {
++        "name": "@wdk-core/arkadeGetLightningFees-request",
++        "stream": false
++      },
++      "response": {
++        "name": "@wdk-core/arkadeGetLightningFees-response",
 +        "stream": false
 +      },
 +      "version": 2
@@ -244,15 +265,54 @@ index 23079ea..8a231d4 100644
 +        "stream": false
 +      },
 +      "version": 2
++    },
++    {
++      "id": 23,
++      "name": "@wdk-core/arkadeWaitForLightningPayment",
++      "request": {
++        "name": "@wdk-core/arkadeWaitForLightningPayment-request",
++        "stream": false
++      },
++      "response": {
++        "name": "@wdk-core/arkadeWaitForLightningPayment-response",
++        "stream": false
++      },
++      "version": 2
++    },
++    {
++      "id": 24,
++      "name": "@wdk-core/arkadeGetSwapMarkets",
++      "request": {
++        "name": "@wdk-core/arkadeGetSwapMarkets-request",
++        "stream": false
++      },
++      "response": {
++        "name": "@wdk-core/arkadeGetSwapMarkets-response",
++        "stream": false
++      },
++      "version": 3
++    },
++    {
++      "id": 25,
++      "name": "@wdk-core/workletStop",
++      "request": {
++        "name": "@wdk-core/workletStop-request",
++        "stream": false
++      },
++      "response": {
++        "name": "@wdk-core/workletStop-response",
++        "stream": false
++      },
++      "version": 4
      }
    ]
  }
 \ No newline at end of file
 diff --git a/spec/hrpc/index.js b/spec/hrpc/index.js
-index e7371d5..61fd162 100644
+index e7371d5..c8d5f52 100644
 --- a/spec/hrpc/index.js
 +++ b/spec/hrpc/index.js
-@@ -34,7 +34,21 @@ const methods = new Map([
+@@ -34,7 +34,29 @@ const methods = new Map([
    ['@wdk-core/getTransactionReceipt', 13],
    [13, '@wdk-core/getTransactionReceipt'],
    ['@wdk-core/dispose', 14],
@@ -268,14 +328,22 @@ index e7371d5..61fd162 100644
 +  [18, '@wdk-core/arkadeGetPendingLightningSends'],
 +  ['@wdk-core/arkadeGetSwapHistory', 19],
 +  [19, '@wdk-core/arkadeGetSwapHistory'],
-+  ['@wdk-core/arkadeGetSwapMarkets', 20],
-+  [20, '@wdk-core/arkadeGetSwapMarkets'],
-+  ['@wdk-core/arkadeGetTransactionHistory', 21],
-+  [21, '@wdk-core/arkadeGetTransactionHistory']
++  ['@wdk-core/arkadeGetLightningLimits', 20],
++  [20, '@wdk-core/arkadeGetLightningLimits'],
++  ['@wdk-core/arkadeGetLightningFees', 21],
++  [21, '@wdk-core/arkadeGetLightningFees'],
++  ['@wdk-core/arkadeGetTransactionHistory', 22],
++  [22, '@wdk-core/arkadeGetTransactionHistory'],
++  ['@wdk-core/arkadeWaitForLightningPayment', 23],
++  [23, '@wdk-core/arkadeWaitForLightningPayment'],
++  ['@wdk-core/arkadeGetSwapMarkets', 24],
++  [24, '@wdk-core/arkadeGetSwapMarkets'],
++  ['@wdk-core/workletStop', 25],
++  [25, '@wdk-core/workletStop']
  ])
- 
+
  class HRPC {
-@@ -56,7 +70,14 @@ class HRPC {
+@@ -56,7 +78,18 @@ class HRPC {
        ['@wdk-core/abstractedSendTransaction', getEncoding('@wdk-core/abstractedSendTransaction-request')],
        ['@wdk-core/abstractedAccountQuoteTransfer', getEncoding('@wdk-core/abstractedAccountQuoteTransfer-request')],
        ['@wdk-core/getTransactionReceipt', getEncoding('@wdk-core/getTransactionReceipt-request')],
@@ -286,12 +354,16 @@ index e7371d5..61fd162 100644
 +      ['@wdk-core/arkadeGetPendingLightningReceives', getEncoding('@wdk-core/arkadeGetPendingLightningReceives-request')],
 +      ['@wdk-core/arkadeGetPendingLightningSends', getEncoding('@wdk-core/arkadeGetPendingLightningSends-request')],
 +      ['@wdk-core/arkadeGetSwapHistory', getEncoding('@wdk-core/arkadeGetSwapHistory-request')],
++      ['@wdk-core/arkadeGetLightningLimits', getEncoding('@wdk-core/arkadeGetLightningLimits-request')],
++      ['@wdk-core/arkadeGetLightningFees', getEncoding('@wdk-core/arkadeGetLightningFees-request')],
++      ['@wdk-core/arkadeGetTransactionHistory', getEncoding('@wdk-core/arkadeGetTransactionHistory-request')],
++      ['@wdk-core/arkadeWaitForLightningPayment', getEncoding('@wdk-core/arkadeWaitForLightningPayment-request')],
 +      ['@wdk-core/arkadeGetSwapMarkets', getEncoding('@wdk-core/arkadeGetSwapMarkets-request')],
-+      ['@wdk-core/arkadeGetTransactionHistory', getEncoding('@wdk-core/arkadeGetTransactionHistory-request')]
++      ['@wdk-core/workletStop', getEncoding('@wdk-core/workletStop-request')]
      ])
      this._responseEncodings = new Map([
        ['@wdk-core/workletStart', getEncoding('@wdk-core/workletStart-response')],
-@@ -71,7 +92,14 @@ class HRPC {
+@@ -71,7 +104,18 @@ class HRPC {
        ['@wdk-core/getApproveTransaction', getEncoding('@wdk-core/getApproveTransaction-response')],
        ['@wdk-core/abstractedSendTransaction', getEncoding('@wdk-core/abstractedSendTransaction-response')],
        ['@wdk-core/abstractedAccountQuoteTransfer', getEncoding('@wdk-core/abstractedAccountQuoteTransfer-response')],
@@ -302,15 +374,19 @@ index e7371d5..61fd162 100644
 +      ['@wdk-core/arkadeGetPendingLightningReceives', getEncoding('@wdk-core/arkadeGetPendingLightningReceives-response')],
 +      ['@wdk-core/arkadeGetPendingLightningSends', getEncoding('@wdk-core/arkadeGetPendingLightningSends-response')],
 +      ['@wdk-core/arkadeGetSwapHistory', getEncoding('@wdk-core/arkadeGetSwapHistory-response')],
++      ['@wdk-core/arkadeGetLightningLimits', getEncoding('@wdk-core/arkadeGetLightningLimits-response')],
++      ['@wdk-core/arkadeGetLightningFees', getEncoding('@wdk-core/arkadeGetLightningFees-response')],
++      ['@wdk-core/arkadeGetTransactionHistory', getEncoding('@wdk-core/arkadeGetTransactionHistory-response')],
++      ['@wdk-core/arkadeWaitForLightningPayment', getEncoding('@wdk-core/arkadeWaitForLightningPayment-response')],
 +      ['@wdk-core/arkadeGetSwapMarkets', getEncoding('@wdk-core/arkadeGetSwapMarkets-response')],
-+      ['@wdk-core/arkadeGetTransactionHistory', getEncoding('@wdk-core/arkadeGetTransactionHistory-response')]
++      ['@wdk-core/workletStop', getEncoding('@wdk-core/workletStop-response')]
      ])
      this._rpc = new RPC(stream, async (req) => {
        const command = methods.get(req.command)
-@@ -195,6 +223,34 @@ class HRPC {
+@@ -195,6 +239,50 @@ class HRPC {
      return this._callSync('@wdk-core/dispose', args)
    }
- 
+
 +  async arkadeGetBoardingAddress (args) {
 +    return this._call('@wdk-core/arkadeGetBoardingAddress', args)
 +  }
@@ -331,21 +407,37 @@ index e7371d5..61fd162 100644
 +    return this._call('@wdk-core/arkadeGetSwapHistory', args)
 +  }
 +
-+  async arkadeGetSwapMarkets (args) {
-+    return this._call('@wdk-core/arkadeGetSwapMarkets', args)
++  async arkadeGetLightningLimits (args) {
++    return this._call('@wdk-core/arkadeGetLightningLimits', args)
++  }
++
++  async arkadeGetLightningFees (args) {
++    return this._call('@wdk-core/arkadeGetLightningFees', args)
 +  }
 +
 +  async arkadeGetTransactionHistory (args) {
 +    return this._call('@wdk-core/arkadeGetTransactionHistory', args)
 +  }
 +
++  async arkadeWaitForLightningPayment (args) {
++    return this._call('@wdk-core/arkadeWaitForLightningPayment', args)
++  }
++
++  async arkadeGetSwapMarkets (args) {
++    return this._call('@wdk-core/arkadeGetSwapMarkets', args)
++  }
++
++  async workletStop (args) {
++    return this._call('@wdk-core/workletStop', args)
++  }
++
    onLog (responseFn) {
      this._handlers['@wdk-core/log'] = responseFn
    }
-@@ -255,6 +311,34 @@ class HRPC {
+@@ -255,6 +343,50 @@ class HRPC {
      this._handlers['@wdk-core/dispose'] = responseFn
    }
- 
+
 +  onArkadeGetBoardingAddress (responseFn) {
 +    this._handlers['@wdk-core/arkadeGetBoardingAddress'] = responseFn
 +  }
@@ -366,39 +458,55 @@ index e7371d5..61fd162 100644
 +    this._handlers['@wdk-core/arkadeGetSwapHistory'] = responseFn
 +  }
 +
-+  onArkadeGetSwapMarkets (responseFn) {
-+    this._handlers['@wdk-core/arkadeGetSwapMarkets'] = responseFn
++  onArkadeGetLightningLimits (responseFn) {
++    this._handlers['@wdk-core/arkadeGetLightningLimits'] = responseFn
++  }
++
++  onArkadeGetLightningFees (responseFn) {
++    this._handlers['@wdk-core/arkadeGetLightningFees'] = responseFn
 +  }
 +
 +  onArkadeGetTransactionHistory (responseFn) {
 +    this._handlers['@wdk-core/arkadeGetTransactionHistory'] = responseFn
 +  }
 +
++  onArkadeWaitForLightningPayment (responseFn) {
++    this._handlers['@wdk-core/arkadeWaitForLightningPayment'] = responseFn
++  }
++
++  onArkadeGetSwapMarkets (responseFn) {
++    this._handlers['@wdk-core/arkadeGetSwapMarkets'] = responseFn
++  }
++
++  onWorkletStop (responseFn) {
++    this._handlers['@wdk-core/workletStop'] = responseFn
++  }
++
    _requestIsStream (command) {
      return [
      ].includes(command)
 diff --git a/spec/hrpc/messages.js b/spec/hrpc/messages.js
-index 4a9a5b1..de6a15c 100644
+index 4a9a5b1..c58eadb 100644
 --- a/spec/hrpc/messages.js
 +++ b/spec/hrpc/messages.js
 @@ -1,11 +1,11 @@
  // This file is autogenerated by the hyperschema compiler
 -// Schema Version: 1
-+// Schema Version: 2
++// Schema Version: 4
  /* eslint-disable camelcase */
  /* eslint-disable quotes */
- 
+
  const { c } = require('hyperschema/runtime')
- 
+
 -const VERSION = 1
-+const VERSION = 2
- 
++const VERSION = 4
+
  // eslint-disable-next-line no-unused-vars
  let version = VERSION
-@@ -728,6 +728,195 @@ const encoding38 = {
+@@ -728,6 +728,317 @@ const encoding38 = {
    }
  }
- 
+
 +// @wdk-core/arkadeGetBoardingAddress-request
 +const encoding39 = {
 +  preencode (state, m) {
@@ -536,37 +644,63 @@ index 4a9a5b1..de6a15c 100644
 +// @wdk-core/arkadeGetSwapHistory-response
 +const encoding48 = encoding44
 +
-+// @wdk-core/arkadeGetSwapMarkets-request
++// @wdk-core/arkadeGetLightningLimits-request
 +const encoding49 = encoding39
 +
-+// @wdk-core/arkadeGetSwapMarkets-response
++// @wdk-core/arkadeGetLightningLimits-response
 +const encoding50 = {
 +  preencode (state, m) {
 +    state.end++ // max flag is 1 so always one byte
 +
-+    if (version >= 2 && m.markets) c.string.preencode(state, m.markets)
++    if (version >= 2 && m.limits) c.string.preencode(state, m.limits)
 +  },
 +  encode (state, m) {
-+    const flags = (version >= 2 && m.markets) ? 1 : 0
++    const flags = (version >= 2 && m.limits) ? 1 : 0
 +
 +    c.uint.encode(state, flags)
 +
-+    if (version >= 2 && m.markets) c.string.encode(state, m.markets)
++    if (version >= 2 && m.limits) c.string.encode(state, m.limits)
 +  },
 +  decode (state) {
 +    const flags = c.uint.decode(state)
 +
 +    return {
-+      markets: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
++      limits: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
++// @wdk-core/arkadeGetLightningFees-request
++const encoding51 = encoding39
++
++// @wdk-core/arkadeGetLightningFees-response
++const encoding52 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 2 && m.fees) c.string.preencode(state, m.fees)
++  },
++  encode (state, m) {
++    const flags = (version >= 2 && m.fees) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 2 && m.fees) c.string.encode(state, m.fees)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      fees: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
 +    }
 +  }
 +}
 +
 +// @wdk-core/arkadeGetTransactionHistory-request
-+const encoding51 = encoding39
++const encoding53 = encoding39
 +
 +// @wdk-core/arkadeGetTransactionHistory-response
-+const encoding52 = {
++const encoding54 = {
 +  preencode (state, m) {
 +    state.end++ // max flag is 1 so always one byte
 +
@@ -588,10 +722,106 @@ index 4a9a5b1..de6a15c 100644
 +  }
 +}
 +
++// @wdk-core/arkadeWaitForLightningPayment-request
++const encoding55 = {
++  preencode (state, m) {
++    c.uint.preencode(state, m.accountIndex)
++    c.string.preencode(state, m.invoice)
++  },
++  encode (state, m) {
++    c.uint.encode(state, m.accountIndex)
++    c.string.encode(state, m.invoice)
++  },
++  decode (state) {
++    const r0 = c.uint.decode(state)
++    const r1 = c.string.decode(state)
++
++    return {
++      accountIndex: r0,
++      invoice: r1
++    }
++  }
++}
++
++// @wdk-core/arkadeWaitForLightningPayment-response
++const encoding56 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 2 && m.txid) c.string.preencode(state, m.txid)
++  },
++  encode (state, m) {
++    const flags = (version >= 2 && m.txid) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 2 && m.txid) c.string.encode(state, m.txid)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      txid: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
++// @wdk-core/arkadeGetSwapMarkets-request
++const encoding57 = encoding39
++
++// @wdk-core/arkadeGetSwapMarkets-response
++const encoding58 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 3 && m.markets) c.string.preencode(state, m.markets)
++  },
++  encode (state, m) {
++    const flags = (version >= 3 && m.markets) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 3 && m.markets) c.string.encode(state, m.markets)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      markets: (version >= 3 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
++// @wdk-core/workletStop-request
++const encoding59 = encoding38
++
++// @wdk-core/workletStop-response
++const encoding60 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 4 && m.status) c.string.preencode(state, m.status)
++  },
++  encode (state, m) {
++    const flags = (version >= 4 && m.status) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 4 && m.status) c.string.encode(state, m.status)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      status: (version >= 4 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
  function setVersion (v) {
    version = v
  }
-@@ -790,6 +979,20 @@ function getEncoding (name) {
+@@ -790,6 +1101,28 @@ function getEncoding (name) {
      case '@wdk-core/getTransactionReceipt-request': return encoding36
      case '@wdk-core/getTransactionReceipt-response': return encoding37
      case '@wdk-core/dispose-request': return encoding38
@@ -605,35 +835,43 @@ index 4a9a5b1..de6a15c 100644
 +    case '@wdk-core/arkadeGetPendingLightningSends-response': return encoding46
 +    case '@wdk-core/arkadeGetSwapHistory-request': return encoding47
 +    case '@wdk-core/arkadeGetSwapHistory-response': return encoding48
-+    case '@wdk-core/arkadeGetSwapMarkets-request': return encoding49
-+    case '@wdk-core/arkadeGetSwapMarkets-response': return encoding50
-+    case '@wdk-core/arkadeGetTransactionHistory-request': return encoding51
-+    case '@wdk-core/arkadeGetTransactionHistory-response': return encoding52
++    case '@wdk-core/arkadeGetLightningLimits-request': return encoding49
++    case '@wdk-core/arkadeGetLightningLimits-response': return encoding50
++    case '@wdk-core/arkadeGetLightningFees-request': return encoding51
++    case '@wdk-core/arkadeGetLightningFees-response': return encoding52
++    case '@wdk-core/arkadeGetTransactionHistory-request': return encoding53
++    case '@wdk-core/arkadeGetTransactionHistory-response': return encoding54
++    case '@wdk-core/arkadeWaitForLightningPayment-request': return encoding55
++    case '@wdk-core/arkadeWaitForLightningPayment-response': return encoding56
++    case '@wdk-core/arkadeGetSwapMarkets-request': return encoding57
++    case '@wdk-core/arkadeGetSwapMarkets-response': return encoding58
++    case '@wdk-core/workletStop-request': return encoding59
++    case '@wdk-core/workletStop-response': return encoding60
      default: throw new Error('Encoder not found ' + name)
    }
  }
 diff --git a/spec/schema/index.js b/spec/schema/index.js
-index 4a9a5b1..de6a15c 100644
+index 4a9a5b1..c58eadb 100644
 --- a/spec/schema/index.js
 +++ b/spec/schema/index.js
 @@ -1,11 +1,11 @@
  // This file is autogenerated by the hyperschema compiler
 -// Schema Version: 1
-+// Schema Version: 2
++// Schema Version: 4
  /* eslint-disable camelcase */
  /* eslint-disable quotes */
- 
+
  const { c } = require('hyperschema/runtime')
- 
+
 -const VERSION = 1
-+const VERSION = 2
- 
++const VERSION = 4
+
  // eslint-disable-next-line no-unused-vars
  let version = VERSION
-@@ -728,6 +728,195 @@ const encoding38 = {
+@@ -728,6 +728,317 @@ const encoding38 = {
    }
  }
- 
+
 +// @wdk-core/arkadeGetBoardingAddress-request
 +const encoding39 = {
 +  preencode (state, m) {
@@ -771,37 +1009,63 @@ index 4a9a5b1..de6a15c 100644
 +// @wdk-core/arkadeGetSwapHistory-response
 +const encoding48 = encoding44
 +
-+// @wdk-core/arkadeGetSwapMarkets-request
++// @wdk-core/arkadeGetLightningLimits-request
 +const encoding49 = encoding39
 +
-+// @wdk-core/arkadeGetSwapMarkets-response
++// @wdk-core/arkadeGetLightningLimits-response
 +const encoding50 = {
 +  preencode (state, m) {
 +    state.end++ // max flag is 1 so always one byte
 +
-+    if (version >= 2 && m.markets) c.string.preencode(state, m.markets)
++    if (version >= 2 && m.limits) c.string.preencode(state, m.limits)
 +  },
 +  encode (state, m) {
-+    const flags = (version >= 2 && m.markets) ? 1 : 0
++    const flags = (version >= 2 && m.limits) ? 1 : 0
 +
 +    c.uint.encode(state, flags)
 +
-+    if (version >= 2 && m.markets) c.string.encode(state, m.markets)
++    if (version >= 2 && m.limits) c.string.encode(state, m.limits)
 +  },
 +  decode (state) {
 +    const flags = c.uint.decode(state)
 +
 +    return {
-+      markets: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
++      limits: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
++// @wdk-core/arkadeGetLightningFees-request
++const encoding51 = encoding39
++
++// @wdk-core/arkadeGetLightningFees-response
++const encoding52 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 2 && m.fees) c.string.preencode(state, m.fees)
++  },
++  encode (state, m) {
++    const flags = (version >= 2 && m.fees) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 2 && m.fees) c.string.encode(state, m.fees)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      fees: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
 +    }
 +  }
 +}
 +
 +// @wdk-core/arkadeGetTransactionHistory-request
-+const encoding51 = encoding39
++const encoding53 = encoding39
 +
 +// @wdk-core/arkadeGetTransactionHistory-response
-+const encoding52 = {
++const encoding54 = {
 +  preencode (state, m) {
 +    state.end++ // max flag is 1 so always one byte
 +
@@ -823,10 +1087,106 @@ index 4a9a5b1..de6a15c 100644
 +  }
 +}
 +
++// @wdk-core/arkadeWaitForLightningPayment-request
++const encoding55 = {
++  preencode (state, m) {
++    c.uint.preencode(state, m.accountIndex)
++    c.string.preencode(state, m.invoice)
++  },
++  encode (state, m) {
++    c.uint.encode(state, m.accountIndex)
++    c.string.encode(state, m.invoice)
++  },
++  decode (state) {
++    const r0 = c.uint.decode(state)
++    const r1 = c.string.decode(state)
++
++    return {
++      accountIndex: r0,
++      invoice: r1
++    }
++  }
++}
++
++// @wdk-core/arkadeWaitForLightningPayment-response
++const encoding56 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 2 && m.txid) c.string.preencode(state, m.txid)
++  },
++  encode (state, m) {
++    const flags = (version >= 2 && m.txid) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 2 && m.txid) c.string.encode(state, m.txid)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      txid: (version >= 2 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
++// @wdk-core/arkadeGetSwapMarkets-request
++const encoding57 = encoding39
++
++// @wdk-core/arkadeGetSwapMarkets-response
++const encoding58 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 3 && m.markets) c.string.preencode(state, m.markets)
++  },
++  encode (state, m) {
++    const flags = (version >= 3 && m.markets) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 3 && m.markets) c.string.encode(state, m.markets)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      markets: (version >= 3 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
++// @wdk-core/workletStop-request
++const encoding59 = encoding38
++
++// @wdk-core/workletStop-response
++const encoding60 = {
++  preencode (state, m) {
++    state.end++ // max flag is 1 so always one byte
++
++    if (version >= 4 && m.status) c.string.preencode(state, m.status)
++  },
++  encode (state, m) {
++    const flags = (version >= 4 && m.status) ? 1 : 0
++
++    c.uint.encode(state, flags)
++
++    if (version >= 4 && m.status) c.string.encode(state, m.status)
++  },
++  decode (state) {
++    const flags = c.uint.decode(state)
++
++    return {
++      status: (version >= 4 && (flags & 1) !== 0) ? c.string.decode(state) : null
++    }
++  }
++}
++
  function setVersion (v) {
    version = v
  }
-@@ -790,6 +979,20 @@ function getEncoding (name) {
+@@ -790,6 +1101,28 @@ function getEncoding (name) {
      case '@wdk-core/getTransactionReceipt-request': return encoding36
      case '@wdk-core/getTransactionReceipt-response': return encoding37
      case '@wdk-core/dispose-request': return encoding38
@@ -840,25 +1200,33 @@ index 4a9a5b1..de6a15c 100644
 +    case '@wdk-core/arkadeGetPendingLightningSends-response': return encoding46
 +    case '@wdk-core/arkadeGetSwapHistory-request': return encoding47
 +    case '@wdk-core/arkadeGetSwapHistory-response': return encoding48
-+    case '@wdk-core/arkadeGetSwapMarkets-request': return encoding49
-+    case '@wdk-core/arkadeGetSwapMarkets-response': return encoding50
-+    case '@wdk-core/arkadeGetTransactionHistory-request': return encoding51
-+    case '@wdk-core/arkadeGetTransactionHistory-response': return encoding52
++    case '@wdk-core/arkadeGetLightningLimits-request': return encoding49
++    case '@wdk-core/arkadeGetLightningLimits-response': return encoding50
++    case '@wdk-core/arkadeGetLightningFees-request': return encoding51
++    case '@wdk-core/arkadeGetLightningFees-response': return encoding52
++    case '@wdk-core/arkadeGetTransactionHistory-request': return encoding53
++    case '@wdk-core/arkadeGetTransactionHistory-response': return encoding54
++    case '@wdk-core/arkadeWaitForLightningPayment-request': return encoding55
++    case '@wdk-core/arkadeWaitForLightningPayment-response': return encoding56
++    case '@wdk-core/arkadeGetSwapMarkets-request': return encoding57
++    case '@wdk-core/arkadeGetSwapMarkets-response': return encoding58
++    case '@wdk-core/workletStop-request': return encoding59
++    case '@wdk-core/workletStop-response': return encoding60
      default: throw new Error('Encoder not found ' + name)
    }
  }
 diff --git a/spec/schema/schema.json b/spec/schema/schema.json
-index 340edf0..4088a2b 100644
+index 340edf0..942e4f7 100644
 --- a/spec/schema/schema.json
 +++ b/spec/schema/schema.json
 @@ -1,5 +1,5 @@
  {
 -  "version": 1,
-+  "version": 2,
++  "version": 4,
    "schema": [
      {
        "name": "log-type-enum",
-@@ -755,6 +755,212 @@
+@@ -755,6 +755,319 @@
        "compact": false,
        "flagsPosition": -1,
        "fields": []
@@ -1016,7 +1384,7 @@ index 340edf0..4088a2b 100644
 +      ]
 +    },
 +    {
-+      "name": "arkadeGetSwapMarkets-request",
++      "name": "arkadeGetLightningLimits-request",
 +      "namespace": "wdk-core",
 +      "compact": false,
 +      "flagsPosition": -1,
@@ -1030,13 +1398,40 @@ index 340edf0..4088a2b 100644
 +      ]
 +    },
 +    {
-+      "name": "arkadeGetSwapMarkets-response",
++      "name": "arkadeGetLightningLimits-response",
 +      "namespace": "wdk-core",
 +      "compact": false,
 +      "flagsPosition": 0,
 +      "fields": [
 +        {
-+          "name": "markets",
++          "name": "limits",
++          "type": "string",
++          "version": 2
++        }
++      ]
++    },
++    {
++      "name": "arkadeGetLightningFees-request",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": -1,
++      "fields": [
++        {
++          "name": "accountIndex",
++          "required": true,
++          "type": "uint",
++          "version": 2
++        }
++      ]
++    },
++    {
++      "name": "arkadeGetLightningFees-response",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": 0,
++      "fields": [
++        {
++          "name": "fees",
 +          "type": "string",
 +          "version": 2
 +        }
@@ -1068,19 +1463,99 @@ index 340edf0..4088a2b 100644
 +          "version": 2
 +        }
 +      ]
++    },
++    {
++      "name": "arkadeWaitForLightningPayment-request",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": -1,
++      "fields": [
++        {
++          "name": "accountIndex",
++          "required": true,
++          "type": "uint",
++          "version": 2
++        },
++        {
++          "name": "invoice",
++          "required": true,
++          "type": "string",
++          "version": 2
++        }
++      ]
++    },
++    {
++      "name": "arkadeWaitForLightningPayment-response",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": 0,
++      "fields": [
++        {
++          "name": "txid",
++          "type": "string",
++          "version": 2
++        }
++      ]
++    },
++    {
++      "name": "arkadeGetSwapMarkets-request",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": -1,
++      "fields": [
++        {
++          "name": "accountIndex",
++          "required": true,
++          "type": "uint",
++          "version": 3
++        }
++      ]
++    },
++    {
++      "name": "arkadeGetSwapMarkets-response",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": 0,
++      "fields": [
++        {
++          "name": "markets",
++          "type": "string",
++          "version": 3
++        }
++      ]
++    },
++    {
++      "name": "workletStop-request",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": -1,
++      "fields": []
++    },
++    {
++      "name": "workletStop-response",
++      "namespace": "wdk-core",
++      "compact": false,
++      "flagsPosition": 0,
++      "fields": [
++        {
++          "name": "status",
++          "type": "string",
++          "version": 4
++        }
++      ]
      }
    ]
 -}
 +}
 \ No newline at end of file
 diff --git a/src/schema/schema.js b/src/schema/schema.js
-index 066f296..2fcc070 100644
+index 066f296..9d8a4b4 100644
 --- a/src/schema/schema.js
 +++ b/src/schema/schema.js
-@@ -346,6 +346,119 @@ schemaNs.register({
+@@ -346,6 +346,163 @@ schemaNs.register({
    fields: []
  })
- 
+
 +/**
 + * ============================================================================
 + * Arkade-specific routes
@@ -1166,17 +1641,31 @@ index 066f296..2fcc070 100644
 +  ]
 +})
 +
-+// arkadeGetSwapMarkets
++// arkadeGetLightningLimits
 +schemaNs.register({
-+  name: 'arkadeGetSwapMarkets-request',
++  name: 'arkadeGetLightningLimits-request',
 +  fields: [
 +    { name: 'accountIndex', type: 'uint', required: true }
 +  ]
 +})
 +schemaNs.register({
-+  name: 'arkadeGetSwapMarkets-response',
++  name: 'arkadeGetLightningLimits-response',
 +  fields: [
-+    { name: 'markets', type: 'string' }
++    { name: 'limits', type: 'string' }
++  ]
++})
++
++// arkadeGetLightningFees
++schemaNs.register({
++  name: 'arkadeGetLightningFees-request',
++  fields: [
++    { name: 'accountIndex', type: 'uint', required: true }
++  ]
++})
++schemaNs.register({
++  name: 'arkadeGetLightningFees-response',
++  fields: [
++    { name: 'fees', type: 'string' }
 +  ]
 +})
 +
@@ -1194,10 +1683,40 @@ index 066f296..2fcc070 100644
 +  ]
 +})
 +
++// arkadeWaitForLightningPayment
++schemaNs.register({
++  name: 'arkadeWaitForLightningPayment-request',
++  fields: [
++    { name: 'accountIndex', type: 'uint', required: true },
++    { name: 'invoice', type: 'string', required: true }
++  ]
++})
++schemaNs.register({
++  name: 'arkadeWaitForLightningPayment-response',
++  fields: [
++    { name: 'txid', type: 'string' }
++  ]
++})
++
++schemaNs.register({
++  name: 'arkadeGetSwapMarkets-request',
++  fields: [{ name: 'accountIndex', type: 'uint', required: true }]
++})
++schemaNs.register({
++  name: 'arkadeGetSwapMarkets-response',
++  fields: [{ name: 'markets', type: 'string' }]
++})
++
++schemaNs.register({ name: 'workletStop-request', fields: [] })
++schemaNs.register({
++  name: 'workletStop-response',
++  fields: [{ name: 'status', type: 'string' }]
++})
++
  Hyperschema.toDisk(schema)
- 
+
  // Load and build interface
-@@ -434,5 +547,45 @@ ns.register({
+@@ -434,5 +591,68 @@ ns.register({
    name: 'dispose',
    request: { name: '@wdk-core/dispose-request', send: true }
  })
@@ -1230,31 +1749,54 @@ index 066f296..2fcc070 100644
 +  request: { name: '@wdk-core/arkadeGetSwapHistory-request', stream: false },
 +  response: { name: '@wdk-core/arkadeGetSwapHistory-response', stream: false }
 +})
++// Retired wire commands reserve their original slots; HRPC 4 emits array indices.
 +ns.register({
-+  name: 'arkadeGetSwapMarkets',
-+  request: { name: '@wdk-core/arkadeGetSwapMarkets-request', stream: false },
-+  response: { name: '@wdk-core/arkadeGetSwapMarkets-response', stream: false }
++  name: 'arkadeGetLightningLimits',
++  request: { name: '@wdk-core/arkadeGetLightningLimits-request', stream: false },
++  response: { name: '@wdk-core/arkadeGetLightningLimits-response', stream: false }
++})
++ns.register({
++  name: 'arkadeGetLightningFees',
++  request: { name: '@wdk-core/arkadeGetLightningFees-request', stream: false },
++  response: { name: '@wdk-core/arkadeGetLightningFees-response', stream: false }
 +})
 +ns.register({
 +  name: 'arkadeGetTransactionHistory',
 +  request: { name: '@wdk-core/arkadeGetTransactionHistory-request', stream: false },
 +  response: { name: '@wdk-core/arkadeGetTransactionHistory-response', stream: false }
 +})
++ns.register({
++  name: 'arkadeWaitForLightningPayment',
++  request: { name: '@wdk-core/arkadeWaitForLightningPayment-request', stream: false },
++  response: { name: '@wdk-core/arkadeWaitForLightningPayment-response', stream: false }
++})
++
++ns.register({
++  name: 'arkadeGetSwapMarkets',
++  request: { name: '@wdk-core/arkadeGetSwapMarkets-request', stream: false },
++  response: { name: '@wdk-core/arkadeGetSwapMarkets-response', stream: false }
++})
 +
  // Save interface to disk
++ns.register({
++  name: 'workletStop',
++  request: { name: '@wdk-core/workletStop-request', stream: false },
++  response: { name: '@wdk-core/workletStop-response', stream: false }
++})
++
  HRPCBuilder.toDisk(builder)
 diff --git a/src/wdk-core/wdk-manager.js b/src/wdk-core/wdk-manager.js
-index ab55aea..da21849 100644
+index ab55aea..7cc3e19 100644
 --- a/src/wdk-core/wdk-manager.js
 +++ b/src/wdk-core/wdk-manager.js
 @@ -32,6 +32,8 @@
- 
+
  /** @typedef {import('@wdk/wallet-btc').BtcWalletConfig} BtcWalletConfig */
- 
+
 +/** @typedef {import('@arkade-os/wdk').ArkadeWalletConfig} ArkadeWalletConfig */
 +
  /** @typedef {import('@wdk/wallet-solana').SolanaWalletConfig} SolanaWalletConfig */
- 
+
  /** @typedef {string | Uint8Array} Seed */
 @@ -44,6 +46,7 @@
   * @property {Seed} ton - The ton's wallet seed phrase.
@@ -1263,7 +1805,7 @@ index ab55aea..da21849 100644
 + * @property {Seed} arkade - The arkade wallet's seed phrase.
   * @property {Seed} solana - The solana's wallet seed phrase.
   */
- 
+
 @@ -55,6 +58,7 @@
   * @property {TonWalletConfig | TonGaslessWalletConfig} ton - The ton blockchain configuration.
   * @property {TronWalletConfig | TronGasfreeWalletConfig} tron - The tron blockchain configuration.
@@ -1271,7 +1813,7 @@ index ab55aea..da21849 100644
 + * @property {ArkadeWalletConfig} arkade - The arkade 'blockchain' configuration.
   * @property {SolanaWalletConfig} solana - The solana blockchain configuration.
   */
- 
+
 @@ -84,6 +88,7 @@ const Blockchain = {
    Ton: 'ton',
    Tron: 'tron',
@@ -1279,11 +1821,20 @@ index ab55aea..da21849 100644
 +  Arkade: 'arkade',
    Solana: 'solana'
  }
- 
-@@ -420,6 +425,48 @@ class WdkManager {
+
+@@ -113,6 +118,8 @@ class WdkManager {
+
+     /** @private */
+     this._account_abstraction_wallets = { }
++    /** @private @type {Promise<void> | null} */
++    this._disposePromise = null
+   }
+
+   /**
+@@ -420,6 +427,48 @@ class WdkManager {
      return await account.getTransactionReceipt(hash)
    }
- 
+
 +  async arkadeGetBoardingAddress (accountIndex) {
 +    return (await this.getAccount(Blockchain.Arkade, accountIndex)).getBoardingAddress()
 +  }
@@ -1329,9 +1880,66 @@ index ab55aea..da21849 100644
    /**
       * Returns an evm transaction to approve the interaction transaction.
       *
-@@ -484,6 +531,16 @@ class WdkManager {
+@@ -442,21 +491,29 @@ class WdkManager {
+
+   /** Disposes all the wallet accounts, erasing their private keys from the memory. */
+   dispose () {
+-    for (const blockchain in this._wallets) {
+-      this._wallets[blockchain].dispose()
++    if (!this._disposePromise) {
++      this._disposePromise = Promise.resolve().then(async () => {
++        const wallets = new Set([...Object.values(this._wallets), ...Object.values(this._account_abstraction_wallets)])
++        const results = await Promise.allSettled([...wallets].map(wallet => Promise.resolve().then(() => wallet.dispose())))
++        this._seed = null
++        this._config = null
++        this._wallets = { }
++        this._account_abstraction_wallets = { }
++        const errors = results.filter(result => result.status === 'rejected').map(result => result.reason)
++        if (errors.length) throw new AggregateError(errors, 'Wallet disposal failed')
++      })
+     }
++    return this._disposePromise
++  }
+
+-    for (const blockchain in this._account_abstraction_wallets) {
+-      this._account_abstraction_wallets[blockchain].dispose()
+-    }
+-    this._seed = null
+-    this._config = null
+-    this._wallets = { }
+-    this._account_abstraction_wallets = { }
++  /** @private */
++  _assertActive () {
++    if (this._disposePromise) throw new Error('Wallet manager has been disposed')
+   }
+
+   /** @private */
+   async _getWalletManager (blockchain) {
++    this._assertActive()
+     if (!Object.values(Blockchain).includes(blockchain)) {
+       throw new Error(`Unsupported blockchain: ${blockchain}.`)
+     }
+@@ -470,22 +527,38 @@ class WdkManager {
+
+       if (EVM_BLOCKCHAINS.includes(blockchain)) {
+         const { default: WalletManagerEvm } = await import('@wdk/wallet-evm')
++        this._assertActive()
+
+         this._wallets[blockchain] = new WalletManagerEvm(seed, config[blockchain])
+       } else if (blockchain === 'ton') {
+         const { default: WalletManagerTon } = await import('@wdk/wallet-ton')
++        this._assertActive()
+
+         this._wallets.ton = new WalletManagerTon(seed, config.ton)
+       } else if (blockchain === 'tron') {
+         const { default: WalletManagerTron } = await import('@wdk/wallet-tron')
++        this._assertActive()
+
+         this._wallets.tron = new WalletManagerTron(seed, config.tron)
+       } else if (blockchain === 'bitcoin') {
          const { default: WalletManagerBtc } = await import('@wdk/wallet-btc')
- 
++        this._assertActive()
+
          this._wallets.bitcoin = new WalletManagerBtc(seed, config.bitcoin)
 +      } else if (blockchain === 'arkade') {
 +        if (!config.arkade || !config.arkade.arkServerUrl) {
@@ -1341,19 +1949,86 @@ index ab55aea..da21849 100644
 +          )
 +        }
 +        const { default: WalletManagerArkade } = await import('@arkade-os/wdk')
++        this._assertActive()
 +
 +        this._wallets.arkade = new WalletManagerArkade(seed, config.arkade)
        } else if (blockchain === 'solana') {
          const { default: WalletManagerSolana } = await import('@wdk/wallet-solana')
- 
++        this._assertActive()
+
+         this._wallets.solana = new WalletManagerSolana(seed, config.solana)
+       }
+@@ -496,6 +569,7 @@ class WdkManager {
+
+   /** @private */
+   async _getWalletManagerWithAccountAbstraction (blockchain) {
++    this._assertActive()
+     if (![...EVM_BLOCKCHAINS, Blockchain.Ton, Blockchain.Tron].includes(blockchain)) {
+       throw new Error(`Account abstraction unsupported for blockchain: ${blockchain}.`)
+     }
+@@ -509,14 +583,17 @@ class WdkManager {
+
+       if (EVM_BLOCKCHAINS.includes(blockchain)) {
+         const { default: WalletManagerEvmErc4337 } = await import('@wdk/wallet-evm-erc-4337')
++        this._assertActive()
+
+         this._account_abstraction_wallets[blockchain] = new WalletManagerEvmErc4337(seed, config[blockchain])
+       } else if (blockchain === 'ton') {
+         const { default: WalletManagerTonGasless } = await import('@wdk/wallet-ton-gasless')
++        this._assertActive()
+
+         this._account_abstraction_wallets.ton = new WalletManagerTonGasless(seed, config.ton)
+       } else if (blockchain === 'tron') {
+         const { default: WalletManagerTronGasfree } = await import('@wdk/wallet-tron-gasfree')
++        this._assertActive()
+
+         this._account_abstraction_wallets.tron = new WalletManagerTronGasfree(seed, config.tron)
+       }
 diff --git a/src/wdk-worklet.js b/src/wdk-worklet.js
-index 630ec9d..26f1e07 100644
+index 630ec9d..6c97f56 100644
 --- a/src/wdk-worklet.js
 +++ b/src/wdk-worklet.js
-@@ -156,3 +156,79 @@ rpc.onDispose(() => {
+@@ -11,16 +11,23 @@ const rpc = new HRPC(IPC)
+  * @type {WdkManager}
+  */
+ let wdk = null
++let lifecycle = Promise.resolve()
+
+-rpc.onWorkletStart(async init => {
++function transition (action) {
++  const next = lifecycle.then(action)
++  lifecycle = next.catch(() => {})
++  return next
++}
++
++rpc.onWorkletStart(init => transition(async () => {
+   try {
+-    if (wdk) wdk.dispose() // cleanup existing;
++    if (wdk) await wdk.dispose()
+     wdk = new WdkManager(init.seedPhrase, JSON.parse(init.config))
+     return { status: 'started' }
+   } catch (error) {
      throw new Error(rpcException.stringifyError(error))
    }
+-})
++}))
+
+ rpc.onGetAddress(async payload => {
+   try {
+@@ -148,11 +155,103 @@ rpc.onGetApproveTransaction(async payload => {
+   }
  })
+
+-rpc.onDispose(() => {
++rpc.onDispose(() => transition(async () => {
+   try {
+-    wdk.dispose()
++    if (wdk) await wdk.dispose()
+     wdk = null
+   } catch (error) {
+     throw new Error(rpcException.stringifyError(error))
+   }
++}))
 +
 +/*****************
 + *
@@ -1362,6 +2037,16 @@ index 630ec9d..26f1e07 100644
 + *****************/
 +
 +const stringifyAmount = (_key, value) => typeof value === 'bigint' ? value.toString() : value
++
++rpc.onWorkletStop(() => transition(async () => {
++  try {
++    if (wdk) await wdk.dispose()
++    wdk = null
++    return { status: 'stopped' }
++  } catch (error) {
++    throw new Error(rpcException.stringifyError(error))
++  }
++}))
 +
 +rpc.onArkadeGetBoardingAddress(async payload => {
 +  try {
@@ -1383,7 +2068,7 @@ index 630ec9d..26f1e07 100644
 +  } catch (error) {
 +    throw new Error(rpcException.stringifyError(error))
 +  }
-+})
+ })
 +
 +rpc.onArkadeGetPendingLightningReceives(async payload => {
 +  try {
@@ -1430,3 +2115,208 @@ index 630ec9d..26f1e07 100644
 +    throw new Error(rpcException.stringifyError(error))
 +  }
 +})
++
++for (const method of ['onArkadeGetLightningLimits', 'onArkadeGetLightningFees', 'onArkadeWaitForLightningPayment']) {
++  rpc[method](async () => {
++    throw new Error(rpcException.stringifyError(new Error('This retired RPC is no longer supported')))
++  })
++}
+diff --git a/test/hrpc-compat.test.cjs b/test/hrpc-compat.test.cjs
+new file mode 100644
+index 0000000..5d692d6
+--- /dev/null
++++ b/test/hrpc-compat.test.cjs
+@@ -0,0 +1,193 @@
++const { test } = require('node:test')
++const assert = require('node:assert/strict')
++const fs = require('node:fs')
++const path = require('node:path')
++const { Duplex } = require('node:stream')
++const { RPC, c } = require('hrpc/runtime')
++const HRPC = require('../spec/hrpc')
++const { getEncoding } = require('../spec/hrpc/messages')
++
++test('preserves existing RPC slots and dispatches old and new clients', { timeout: 5000 }, async () => {
++  const root = path.join(__dirname, '..')
++  const definition = JSON.parse(fs.readFileSync(path.join(root, 'spec/hrpc/hrpc.json')))
++  const bindings = fs.readFileSync(path.join(root, 'spec/hrpc/index.js'), 'utf8')
++  for (const [index, entry] of definition.schema.entries()) assert.equal(entry.id, index)
++  const expected = [
++    [20, 'arkadeGetLightningLimits'], [21, 'arkadeGetLightningFees'],
++    [22, 'arkadeGetTransactionHistory'], [23, 'arkadeWaitForLightningPayment'],
++    [24, 'arkadeGetSwapMarkets'], [25, 'workletStop']
++  ]
++  for (const [id, name] of expected) {
++    assert.equal(definition.schema.find(entry => entry.id === id).name, `@wdk-core/${name}`)
++    assert.ok(bindings.includes(`['@wdk-core/${name}', ${id}]`))
++    assert.ok(bindings.includes(`[${id}, '@wdk-core/${name}']`))
++  }
++  const clientStream = new Duplex({
++    read () {},
++    write (chunk, _encoding, callback) { serverStream.push(chunk); callback() }
++  })
++  const serverStream = new Duplex({
++    read () {},
++    write (chunk, _encoding, callback) { clientStream.push(chunk); callback() }
++  })
++  const server = new HRPC(serverStream)
++  const oldClient = new RPC(clientStream)
++  let historyCalls = 0
++  let marketsCalls = 0
++  server.onArkadeGetTransactionHistory(async () => {
++    historyCalls++
++    return { transactions: '[{"txid":"history"}]' }
++  })
++  server.onArkadeGetSwapMarkets(async () => {
++    marketsCalls++
++    return { markets: '[{"key":"new-market"}]' }
++  })
++  for (const name of ['LightningLimits', 'LightningFees', 'WaitForLightningPayment']) {
++    const method = name.startsWith('Wait') ? `onArkade${name}` : `onArkadeGet${name}`
++    server[method](async () => { throw new Error('This retired RPC is no longer supported') })
++  }
++  async function call(id, name, args) {
++    const request = oldClient.request(id)
++    request.send(c.encode(getEncoding(`@wdk-core/${name}-request`), args))
++    return c.decode(getEncoding(`@wdk-core/${name}-response`), await request.reply())
++  }
++  try {
++    assert.deepEqual(await call(22, 'arkadeGetTransactionHistory', { accountIndex: 0 }), {
++      transactions: '[{"txid":"history"}]'
++    })
++    assert.deepEqual(await call(24, 'arkadeGetSwapMarkets', { accountIndex: 0 }), {
++      markets: '[{"key":"new-market"}]'
++    })
++    for (const [id, name] of expected.filter(([id]) => [20, 21, 23].includes(id))) {
++      await assert.rejects(call(id, name, { accountIndex: 0, invoice: 'ln-old' }), /retired RPC/)
++    }
++    assert.equal(historyCalls, 1)
++    assert.equal(marketsCalls, 1)
++  } finally {
++    clientStream.destroy()
++    serverStream.destroy()
++  }
++})
++
++test('manager drains every cached wallet before clearing secrets', async () => {
++  const { WdkManager } = require('../src/wdk-core/wdk-manager')
++  const manager = new WdkManager('seed', {})
++  let finishWallet
++  let finishAbstracted
++  let walletStarted
++  let abstractedStarted
++  const walletGate = new Promise(resolve => { finishWallet = resolve })
++  const abstractedGate = new Promise(resolve => { finishAbstracted = resolve })
++  const walletEntered = new Promise(resolve => { walletStarted = resolve })
++  const abstractedEntered = new Promise(resolve => { abstractedStarted = resolve })
++  manager._wallets = { arkade: { dispose: async () => { walletStarted(); await walletGate } } }
++  manager._account_abstraction_wallets = { ethereum: { dispose: async () => { abstractedStarted(); await abstractedGate } } }
++  const disposed = manager.dispose()
++  assert.equal(manager.dispose(), disposed)
++  await Promise.all([walletEntered, abstractedEntered])
++  assert.equal(manager._seed, 'seed')
++  await assert.rejects(manager._getWalletManager('arkade'), /disposed/)
++  finishWallet()
++  await new Promise(resolve => setImmediate(resolve))
++  assert.equal(manager._seed, 'seed')
++  finishAbstracted()
++  await disposed
++  assert.equal(manager._seed, null)
++  assert.equal(manager._config, null)
++  assert.deepEqual(manager._wallets, {})
++  assert.deepEqual(manager._account_abstraction_wallets, {})
++})
++
++test('worklet stop and restart acknowledge only after wallet teardown', { timeout: 5000 }, async () => {
++  const instances = []
++  class Manager {
++    constructor () { instances.push(this) }
++    async dispose () { if (this.entered) this.entered(); await this.gate }
++  }
++  const { client, close } = workletClient(Manager)
++  const start = () => client.workletStart({ seedPhrase: 'seed', config: '{}' })
++  try {
++    assert.equal((await start()).status, 'started')
++    let finish
++    let entered
++    const draining = new Promise(resolve => { entered = resolve })
++    instances[0].gate = new Promise(resolve => { finish = resolve })
++    instances[0].entered = entered
++    let acknowledged = false
++    const stopping = client.workletStop({}).then(value => { acknowledged = true; return value })
++    await draining
++    assert.equal(acknowledged, false)
++    finish()
++    assert.equal((await stopping).status, 'stopped')
++    assert.equal((await client.workletStop({})).status, 'stopped')
++    assert.equal((await start()).status, 'started')
++    let finishRestart
++    let restartEntered
++    const restarting = new Promise(resolve => { restartEntered = resolve })
++    instances[1].gate = new Promise(resolve => { finishRestart = resolve })
++    instances[1].entered = restartEntered
++    const restarted = start()
++    await restarting
++    assert.equal(instances.length, 2)
++    finishRestart()
++    assert.equal((await restarted).status, 'started')
++    assert.equal(instances.length, 3)
++    await client.workletStop({})
++  } finally {
++    close()
++  }
++})
++
++test('serializes concurrent starts and stops without abandoning a wallet', { timeout: 5000 }, async () => {
++  const instances = []
++  class Manager {
++    constructor () { this.disposed = false; instances.push(this) }
++    async dispose () {
++      if (this.entered) this.entered()
++      await this.gate
++      this.disposed = true
++    }
++  }
++  const { client, close } = workletClient(Manager)
++  const start = () => client.workletStart({ seedPhrase: 'seed', config: '{}' })
++  try {
++    for (const command of ['stop', 'start']) {
++      await start()
++      const previous = instances.at(-1)
++      let finish
++      let entered
++      const draining = new Promise(resolve => { entered = resolve })
++      previous.gate = new Promise(resolve => { finish = resolve })
++      previous.entered = entered
++      const starting = start()
++      const competing = command === 'stop' ? client.workletStop({}) : start()
++      await draining
++      finish()
++      await Promise.all([starting, competing])
++      await client.workletStop({})
++      assert.ok(instances.every(manager => manager.disposed), `${command} abandoned a wallet`)
++    }
++    await assert.rejects(client.workletStart({ seedPhrase: 'seed', config: '{' }))
++    assert.equal((await start()).status, 'started')
++    await client.workletStop({})
++  } finally {
++    close()
++  }
++})
++
++function workletClient (Manager) {
++  const vm = require('node:vm')
++  const { createRequire } = require('node:module')
++  const file = path.join(__dirname, '../src/wdk-worklet.js')
++  const nativeRequire = createRequire(file)
++  const clientStream = new Duplex({ read () {}, write (chunk, _encoding, callback) { serverStream.push(chunk); callback() } })
++  const serverStream = new Duplex({ read () {}, write (chunk, _encoding, callback) { clientStream.push(chunk); callback() } })
++  vm.runInNewContext(fs.readFileSync(file, 'utf8'), {
++    BareKit: { IPC: serverStream },
++    require: name => name.endsWith('/wdk-manager') ? { WdkManager: Manager } : nativeRequire(name)
++  }, { filename: file })
++  return {
++    client: new HRPC(clientStream),
++    close () { clientStream.destroy(); serverStream.destroy() }
++  }
++}

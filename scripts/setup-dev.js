@@ -6,7 +6,7 @@
 
 import { execSync } from 'child_process';
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -14,12 +14,7 @@ const PROJECT_ROOT = join(__dirname, '..');
 
 function run(cmd, cwd = PROJECT_ROOT) {
   console.log(`> ${cmd}`);
-  try {
-    execSync(cmd, { cwd, stdio: 'inherit', shell: true });
-  } catch (error) {
-    // Some commands may fail but we want to continue
-    console.log(`  (command completed with warnings)`);
-  }
+  execSync(cmd, { cwd, stdio: 'inherit', shell: true });
 }
 
 // Symlink a local package into another package's node_modules directly,
@@ -30,13 +25,15 @@ function run(cmd, cwd = PROJECT_ROOT) {
 // built — all we actually need is a symlink at node_modules/<pkg-name>.
 function linkPackage(sourceDir, hostDir) {
   const pkg = JSON.parse(readFileSync(join(sourceDir, 'package.json'), 'utf8'));
-  const targetPath = join(hostDir, 'node_modules', pkg.name);
+  const modulesDir = resolve(hostDir, 'node_modules');
+  const targetPath = resolve(modulesDir, pkg.name);
+  if (!targetPath.startsWith(`${modulesDir}${sep}`)) throw new Error('Invalid package link path');
   console.log(`> ln -sfn ${sourceDir} ${targetPath}`);
   mkdirSync(dirname(targetPath), { recursive: true });
   // rmSync removes symlinks themselves (without following) and directories
   // recursively, so this handles all three cases: symlink, real install, missing.
   rmSync(targetPath, { recursive: true, force: true });
-  symlinkSync(sourceDir, targetPath);
+  symlinkSync(sourceDir, targetPath, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
 // Apply a patch idempotently: skip if it's already applied (so reruns are safe).
@@ -51,22 +48,14 @@ function applyPatch(patchPath, cwd) {
   } catch {
     // Not already applied — fall through and apply.
   }
-  try {
-    execSync(`git apply "${patchPath}"`, { cwd, stdio: 'inherit', shell: true });
-  } catch {
-    console.log('  (command completed with warnings)');
-  }
+  execSync(`git apply "${patchPath}"`, { cwd, stdio: 'inherit', shell: true });
 }
 
 console.log('=== Arkade WDK Development Setup ===\n');
 
 // Initialize and update submodules
 console.log('1. Initializing git submodules...');
-// --force resets each submodule's working tree to the recorded commit even
-// when it's already initialized. Without it, a submodule whose working tree
-// was wiped or left dirty (but whose HEAD already matches) is treated as
-// up-to-date and never restored, which then breaks the patch step below.
-run('git submodule update --init --recursive --force');
+run('git submodule update --init --recursive');
 
 // Apply patches to submodules
 console.log('\n2. Applying patches to submodules...');
@@ -77,7 +66,8 @@ applyPatch(join(patchDir, 'wdk-starter-react-native.patch'), join(PROJECT_ROOT, 
 
 // Install dependencies for main package
 console.log('\n3. Installing arkade-wdk dependencies...');
-run('npm install');
+run('npm install --include=dev');
+run('npm run build:types');
 
 // Patch bare-url@2.3.0 with the isURLSearchParams export that bare-fetch@2.8.2
 // expects from bare-url@^2.4.0. Our npm override pins bare-url to 2.3.0 (the
@@ -102,7 +92,7 @@ const pearWrkDir = join(PROJECT_ROOT, 'packages', 'pear-wrk-wdk');
 // gen:mobile-bundle, and bare-pack can't resolve @arkade-os/wdk until
 // we link it in the next step (the worklet's wdk-manager.js does
 // `await import('@arkade-os/wdk')` for the arkade branch).
-run('npm install --ignore-scripts', pearWrkDir);
+run('npm install --include=dev --ignore-scripts', pearWrkDir);
 // Link @arkade-os/wdk via direct fs symlink rather than `npm link`,
 // because npm link's internal install can prune other deps and replace
 // the symlink with a snapshot if any later command runs npm install.
@@ -116,6 +106,7 @@ linkPackage(join(pearWrkDir, 'shims', 'bare-abort-jsshim'), pearWrkDir);
 linkPackage(join(pearWrkDir, 'shims', 'bare-performance-jsshim'), pearWrkDir);
 linkPackage(join(pearWrkDir, 'shims', 'bare-stdio-jsshim'), pearWrkDir);
 linkPackage(join(pearWrkDir, 'shims', 'bare-type-jsshim'), pearWrkDir);
+run('npm run build:types', pearWrkDir);
 // Now generate the mobile bundle — the @arkade-os/wdk symlink is in place.
 run('npm run gen:mobile-bundle', pearWrkDir);
 
@@ -124,7 +115,7 @@ console.log('\n5. Setting up wdk-react-native-provider...');
 const providerDir = join(PROJECT_ROOT, 'packages', 'wdk-react-native-provider');
 // Install own deps without running scripts (prepare would fail without
 // @arkade-os/wdk and @tetherto/pear-wrk-wdk linked).
-run('npm install --ignore-scripts', providerDir);
+run('npm install --include=dev --ignore-scripts', providerDir);
 // Link both packages via direct fs symlinks. Same reason as step 4:
 // the previous version of this script used `npm link` here AND a
 // follow-up `npm install --ignore-scripts` "to reinstall deps that
@@ -139,13 +130,15 @@ linkPackage(pearWrkDir, providerDir);
 run('npm run prepare', providerDir);
 // Remove duplicate copies of peer-dep packages so the example app's
 // instance is used at runtime (avoids "Invalid hook call" from duplicate React)
-run('rm -rf node_modules/react node_modules/react-native node_modules/react-dom node_modules/@types/react', providerDir);
+for (const peer of ['react', 'react-native', 'react-dom', '@types/react']) {
+  rmSync(join(providerDir, 'node_modules', peer), { recursive: true, force: true });
+}
 
 // Setup wdk-starter-react-native example
 console.log('\n6. Setting up wdk-starter-react-native example...');
 const exampleDir = join(PROJECT_ROOT, 'examples', 'wdk-starter-react-native');
 // Install without scripts to avoid issues with missing linked packages
-run('npm install --ignore-scripts', exampleDir);
+run('npm install --include=dev --ignore-scripts', exampleDir);
 
 // Install expo-crypto for Arkade support (if not already installed)
 console.log('\n7. Ensuring expo-crypto is installed...');

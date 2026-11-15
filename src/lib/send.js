@@ -7,6 +7,12 @@ import {
   createDefaultPaymentRouter,
   arkTarget,
   isLnurl,
+  walletFeeSource,
+  selectVirtualCoins,
+  resolveSendAmount,
+  Estimator,
+  toOffchainInputFeeParams,
+  DustChangeError,
 } from '@arkade-os/sdk';
 import { lightningRail } from '@arkade-os/swap';
 import { createLnurlClient } from '@arkade-os/lnurl-client';
@@ -24,8 +30,9 @@ import {
  * @returns {import('@arkade-os/lnurl-client/arkade').LnurlPaymentRouter}
  */
 export function createPaymentRouter(wallet, { solver = null, client } = {}) {
-  const router = createDefaultPaymentRouter(
-    /** @type {import('@arkade-os/sdk').Wallet} */ (wallet)
+  const concrete = /** @type {import('@arkade-os/sdk').Wallet} */ (wallet);
+  const router = createDefaultPaymentRouter(concrete).use(
+    cappedOnchainRail(walletFeeSource(concrete))
   );
   const rail = solver ? lightningRail(solver) : undefined;
   return arkadePaymentRouter({ wallet, router, lightning: rail, client });
@@ -44,20 +51,68 @@ export function createReadOnlyPaymentRouter(wallet, arkInfo) {
   })
     .use(arkRail())
     .use(arkAssetRail())
-    .use(onchainRail({ feeInfo: async () => (await arkInfo).fees }));
+    .use(cappedOnchainRail(async () => (await arkInfo).fees));
   for (const rail of lnurlRails({ client: createLnurlClient(), arkade: arkRail() })) {
     router.use(rail);
   }
   return router;
 }
 
+/** @param {() => Promise<import('@arkade-os/sdk').FeeInfo>} feeInfo
+ * @returns {import('@arkade-os/sdk').PaymentRail} */
+function cappedOnchainRail(feeInfo) {
+  const rail = onchainRail({ feeInfo });
+  return {
+    ...rail,
+    async quote(req, ctx) {
+      const capped =
+        /** @type {import('@arkade-os/sdk').PaymentRequest & { maxFee?: number | bigint }} */ (req);
+      if (capped.maxFee === undefined || req.selectedVtxos) return rail.quote(req, ctx);
+      const fees = await feeInfo();
+      const estimator = new Estimator(fees.intentFee ?? {});
+      const candidates = (
+        await ctx.wallet.getSpendableVtxos({
+          withRecoverable: true,
+          withUnrolled: false,
+          genericallySpendableOnly: true,
+        })
+      ).filter(
+        (coin) =>
+          !coin.assets?.length &&
+          estimator.evalOffchainInput(toOffchainInputFeeParams(coin)).satoshis < coin.value
+      );
+      const fixedRail = onchainRail({ feeInfo: async () => fees });
+      const dust = BigInt(
+        /** @type {import('@arkade-os/sdk').Wallet} */ (ctx.wallet).dustAmount ?? 330
+      );
+      let target = resolveSendAmount(rail.id, req.raw, req.amount);
+      for (;;) {
+        const selectedVtxos =
+          /** @type {import('@arkade-os/sdk').NormalizedExtendedVirtualCoin[]} */ (
+            selectVirtualCoins(candidates, target).inputs
+          );
+        const quote = await fixedRail.quote({ ...req, selectedVtxos }, ctx);
+        const available = selectedVtxos.reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+        const change = available - BigInt(quote.total);
+        if (change === 0n || change >= dust) return quote;
+        if (change > 0n && selectedVtxos.length === candidates.length) {
+          throw new DustChangeError(change, dust);
+        }
+        target = change > 0n ? Number(available) + 1 : quote.total;
+      }
+    },
+  };
+}
+
 /**
  * @typedef {{ router: import('@arkade-os/lnurl-client/arkade').LnurlPaymentRouter;
- *   to: string; amount: bigint; assets?: import('@arkade-os/sdk').Asset[]; maxFee?: number | bigint; signal?: AbortSignal }} SendOptions
+ *   to: string; amount: bigint; assets?: import('@arkade-os/sdk').Asset[]; maxFee?: number | bigint;
+ *   signal?: AbortSignal; paymentTimeoutMs?: number;
+ *   trackCompletion?: (completion: Promise<import('@arkade-os/sdk').RouteResult>) => void }} SendOptions
  */
 
 /** @param {SendOptions} options */
-function paymentRequest({ to, amount, assets }) {
+function paymentRequest({ to, amount, assets, maxFee }) {
   if (amount < 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error('Amount must be a non-negative safe integer number of satoshis');
   }
@@ -78,6 +133,7 @@ function paymentRequest({ to, amount, assets }) {
     raw,
     ...(sats !== undefined ? { amount: sats } : {}),
     ...(assets ? { assets } : {}),
+    ...(maxFee !== undefined ? { maxFee } : {}),
   };
 }
 
@@ -100,6 +156,10 @@ export async function quoteSend(options) {
 /** @param {SendOptions} options */
 export async function send(options) {
   options.signal?.throwIfAborted();
+  const timeoutMs = options.paymentTimeoutMs ?? 120_000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1) {
+    throw new RangeError('Payment timeout must be a positive integer of at most 2147483647 ms');
+  }
   const quote = await withAbort(routePayment(options), options.signal);
   options.signal?.throwIfAborted();
   const fee = BigInt(quote.fee);
@@ -107,6 +167,18 @@ export async function send(options) {
     throw new MaximumFeeExceededError('Payment fee exceeds the configured maximum.', {});
   }
   const handle = await quote.send();
-  const result = await handle.settled();
+  let result;
+  try {
+    options.trackCompletion?.(handle.settled());
+    result = await handle.settled({ timeoutMs });
+  } catch (error) {
+    throw Object.assign(
+      error instanceof Error ? error : new Error('Payment settlement failed', { cause: error }),
+      {
+        paymentId: handle.id,
+        railId: quote.railId,
+      }
+    );
+  }
   return { txid: result.txid ?? result.preimage ?? result.swapId ?? handle.id, fee };
 }

@@ -269,6 +269,7 @@ describe('LNURL interactive sessions', () => {
       assert.equal(session.closed, true);
       assert.equal(account._sessions.size, 0);
       assert.equal(wallet.dispose.mock.callCount(), 1);
+      await assert.rejects(account.openLnurlSession({ onInvoiceRequest() {} }), /disposed/);
     }
   );
 

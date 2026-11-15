@@ -1,6 +1,6 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { Wallet, ArkAddress, SingleKey } from '@arkade-os/sdk';
+import { Wallet, ArkAddress, SingleKey, RestOperatorProvider } from '@arkade-os/sdk';
 import { InMemoryAssetSwapRepository } from '@arkade-os/swap';
 import { MaximumFeeExceededError } from '@tetherto/wdk-wallet';
 import WalletManagerArkade from '../wallet-manager-arkade.js';
@@ -36,6 +36,40 @@ function account(config = {}) {
 }
 
 describe('payment lifetime and fee limits', () => {
+  it(
+    'keeps the wallet and key alive after a caller timeout until native execution ends',
+    { timeout: 2000 },
+    async () => {
+      const a = account({ paymentTimeoutMs: 5 });
+      let finish;
+      a._wallet.send = mock.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      );
+      await assert.rejects(a.sendTransaction({ to: address, value: 1000n }), /settle timeout/);
+      const disposing = a.dispose();
+      let disposed = false;
+      void disposing.then(() => {
+        disposed = true;
+      });
+      try {
+        await new Promise(setImmediate);
+        assert.equal(disposed, false);
+        assert.equal(a._wallet.dispose.mock.callCount(), 0);
+        assert.ok(a.keyPair.privateKey.every((byte) => byte === 4));
+      } finally {
+        finish('late-ark-tx');
+        await disposing;
+      }
+      await a.dispose();
+      assert.equal(a._wallet.send.mock.callCount(), 1);
+      assert.equal(a._wallet.dispose.mock.callCount(), 1);
+      assert.ok(a.keyPair.privateKey.every((byte) => byte === 0));
+    }
+  );
+
   for (const [method, config, request] of [
     ['sendTransaction', { transactionMaxFee: 0n }, { to: address, value: 1000n }],
     ['transfer', { transferMaxFee: 0n }, { recipient: address, token: 'asset', amount: 100n }],
@@ -103,6 +137,21 @@ describe('payment lifetime and fee limits', () => {
 });
 
 describe('manager integration', () => {
+  it('lets the SDK resolve a configured service including its emulator', async () => {
+    mock.method(RestOperatorProvider.prototype, 'getInfo', async () => info);
+    const create = mock.method(Wallet, 'create', async () => wallet());
+    const service = {
+      operatorUrl: 'http://localhost:57020',
+      emulatorUrl: 'http://localhost:57023',
+    };
+    const manager = new WalletManagerArkade(seed.slice(), { service });
+    await manager.getAccount();
+    const config = create.mock.calls[0].arguments[0];
+    assert.deepEqual(config.service, service);
+    assert.equal(config.operatorProvider, undefined);
+    assert.equal(config.indexerProvider, undefined);
+    await manager.dispose();
+  });
   it('keeps the minimum client build rejection actionable without retrying', async () => {
     const getInfo = mock.fn(async () => {
       throw new Error(
@@ -135,6 +184,24 @@ describe('manager integration', () => {
     assert.equal(create.mock.callCount(), 1);
     assert.equal(first.config.transactionMaxFee, 50n);
     assert.equal(first.getLnurl().domain, 'arkade.money');
+    await manager.dispose();
+  });
+
+  it('resolves persistent wallet storage separately for each cached account path', async () => {
+    const create = mock.method(Wallet, 'create', async () => wallet());
+    const storage = mock.fn((path) => ({ walletRepository: { namespace: path } }));
+    const manager = new WalletManagerArkade(seed.slice(), {
+      operatorProvider: { getInfo: async () => info },
+      storage,
+    });
+    await Promise.all([manager.getAccount(0), manager.getAccount(1), manager.getAccount(0)]);
+    assert.equal(storage.mock.callCount(), 2);
+    assert.deepEqual(
+      create.mock.calls
+        .map(({ arguments: [config] }) => config.storage.walletRepository.namespace)
+        .sort(),
+      ["m/86'/0/0'/0/0", "m/86'/0/0'/0/1"]
+    );
     await manager.dispose();
   });
 

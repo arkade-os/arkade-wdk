@@ -59,6 +59,12 @@ The return shapes follow WDK: sends return `{ hash, fee }`, and quotes return
 chosen quote and waits for its payment handle to settle. Settlement errors do not
 retry through another solver or payment rail.
 
+`paymentTimeoutMs` bounds the caller's settlement wait (default: 120 seconds).
+A timeout does not cancel or reverse a payment. Errors retain `paymentId` and
+`railId`; reconcile persisted swaps and transaction history before sending again.
+The returned `hash` is the rail's transaction ID, preimage, swap ID, or handle ID;
+it is not necessarily a Bitcoin transaction ID.
+
 Arkade transfers use the SDK's zero-fee offchain rail. Bitcoin payments use the
 SDK's collaborative exit rail and operator fee schedule. Solver-backed Lightning
 requires the solver configuration below. An LNURL offering a direct Arkade payment
@@ -75,6 +81,13 @@ const estimate = await account.quoteTransfer({
 
 The SDK supplies the asset output's satoshi carrier and validates supported routes.
 The adapter does not estimate fees from fixed transaction sizes.
+
+When `transactionMaxFee` is configured, onchain quotes freeze the BTC inputs and
+include their input, change, and exit fees before enforcing the cap. These exits
+use asset-free VTXOs so token holdings remain untouched. If all BTC is attached to
+assets, the wallet needs a separate BTC input for a capped exit. Capped exits use
+collaborative settlement; the SDK's boarding cosign fast path has no absolute fee
+limit in this version.
 
 ## Solver discovery and Lightning
 
@@ -122,7 +135,7 @@ without recreating the protocol in the adapter.
 ```javascript
 const lnurl = account.getLnurl();
 let receiver = await lnurl.owned();
-if (!receiver) receiver = await lnurl.claim({ nameless: true });
+if (!receiver) receiver = await lnurl.claim({ username: 'your-available-name' });
 
 console.log(receiver.lnurl, receiver.lightningAddress);
 const request = await receiver.payRequest();
@@ -137,12 +150,16 @@ wallet destinations. The facade also exposes `addresses()`, `capabilities()`,
 `sync()`; supply `lnurl.store` when integrating payment synchronization with local
 storage.
 
+Check `capabilities()` before selecting an allocation mode. Server 0.6.0 supports
+named and random claims; nameless claims require a server advertising session
+allocation. An omitted claim name requests random allocation where supported.
+
 Default services follow the wallet's operator network:
 
-| Network | Service | Lightning address domain |
-| --- | --- | --- |
-| Bitcoin mainnet | `https://lnurl.arkade.sh` | `arkade.money` |
-| Mutinynet | `https://lnurl.mutinynet.arkade.sh` | `lnurl.mutinynet.arkade.sh` |
+| Network         | Service                             | Lightning address domain    |
+| --------------- | ----------------------------------- | --------------------------- |
+| Bitcoin mainnet | `https://lnurl.arkade.sh`           | `arkade.money`              |
+| Mutinynet       | `https://lnurl.mutinynet.arkade.sh` | `lnurl.mutinynet.arkade.sh` |
 
 Other networks require explicit LNURL configuration. Override `lnurl` to use a
 custom service, domain, transport, payment store, or advertised payment methods:
@@ -165,6 +182,11 @@ the package's responder. Call `session.reportSettled(preimage)` after verified l
 settlement and `session.close()` when finished. Account disposal closes its sessions
 and aborts pending session opens.
 
+Sessions belong to the caller until `close()` or account disposal, including
+across stream disconnects and reconnects. LNURL server 0.6.0 accepts
+`reportSettled()` and exposes the result through `pollVerify()`, but does not emit
+the `invoice_settled` SSE frame consumed by `onSettled`.
+
 ## Account APIs
 
 The package exports `WalletManagerArkade` as its default, plus
@@ -178,6 +200,7 @@ LNURL receiving, and `toReadOnlyAccount()`.
 
 `toReadOnlyAccount()` uses the SDK's `toReadonly()` helper. It supplies no signing
 identity, payment execution methods, or swap client to the returned account.
+Await the returned view's `dispose()` when finished to close its SDK watchers.
 `signTransaction()` is unsupported because Arkade requires operator cosigning;
 use `sendTransaction()`.
 
@@ -188,6 +211,8 @@ use `sendTransaction()`.
 
 Await account or manager disposal to close sessions, drain swap work, and erase
 private key material. Manager disposal also closes the SDK wallets.
+Disposal drains an executing payment even if its caller's settlement wait timed
+out; private keys remain available until that native operation finishes.
 
 ## Configuration and persistence
 
@@ -195,11 +220,12 @@ private key material. Manager disposal also closes the SDK wallets.
 `identity`, which the adapter derives. `arkServerUrl` remains a convenience for an
 operator URL; custom SDK providers can be supplied for other transports.
 
-| Field | Purpose |
-| --- | --- |
-| `storage` | SDK wallet and contract repositories; defaults to in-memory storage for runtimes without IndexedDB. |
-| `solver(path)` | Per-account swap client configuration with an explicit persistent repository. |
-| `lnurl` | LNURL service, domain, client, payment store, and advertised methods. |
+| Field              | Purpose                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `storage`          | SDK repositories, or a `(path) => repositories` factory for isolated accounts; defaults to in-memory storage. |
+| `solver(path)`     | Per-account swap client configuration with an explicit persistent repository.                                 |
+| `lnurl`            | LNURL service, domain, client, payment store, and advertised methods.                                         |
+| `paymentTimeoutMs` | Positive integer settlement wait in milliseconds; defaults to 120,000.                                        |
 
 In-memory wallet storage is session-local. Production applications should supply
 persistent SDK repositories as well as a persistent solver repository. Funding,
@@ -223,6 +249,11 @@ The package pins SDK `0.5.6`, swap `0.1.6`, lnurl-client `0.9.4`, and nostr-tool
 `2.24.1`. Nostr is pinned to the swap package's exact peer version. Update those
 packages together and validate the generated declarations.
 
+The [funded regtest instructions](test/e2e/stack/README.md) start an isolated,
+version-pinned backend and run `npm run test:e2e`. This tests actual transfers,
+assets, boarding, onchain fees, Nostr discovery, Lightning, LNURL, and restart
+recovery with persistent SQLite state.
+
 ## React Native submodules
 
 `packages/pear-wrk-wdk`, `packages/wdk-react-native-provider`, and
@@ -242,6 +273,11 @@ packages. Verify the links and build commands in each submodule. Root Node tests
 do not validate Android, iOS, Bare, or Expo runtime behavior. After changing a
 submodule, regenerate its patch with `node scripts/generate-patches.js` and build
 the affected package before testing the example app.
+
+`npm run test:e2e:sample` runs the patched sample service and real HRPC bindings
+against the same regtest stack. It uses Node equivalents for device storage,
+crypto, and worklet loading. Build the provider worklets and export the Expo app
+separately; this harness does not replace an Android or iOS device run.
 
 ## Releases
 
