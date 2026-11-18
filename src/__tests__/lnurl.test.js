@@ -23,7 +23,8 @@ const capabilities = {
 };
 
 function accountWithServer(respond) {
-  const identity = SingleKey.fromPrivateKey(new Uint8Array(32).fill(3));
+  const privateKey = new Uint8Array(32).fill(3);
+  const identity = SingleKey.fromPrivateKey(privateKey);
   const fetchImpl = mock.fn(async (url, init = {}) => respond(url, init));
   const client = createLnurlClient({ baseUrl, fetchImpl });
   const wallet = {
@@ -36,7 +37,7 @@ function accountWithServer(respond) {
     arkadeAddress,
     "m/86'/1/0'/0/0",
     wallet,
-    { publicKey: new Uint8Array(33), privateKey: new Uint8Array(32) },
+    { publicKey: new Uint8Array(33), privateKey },
     {},
     Promise.resolve({}),
     { lnurl: { baseUrl, domain, client } }
@@ -112,6 +113,29 @@ describe('LNURL receiver', () => {
       domain,
       claimPublicKey: hex.encode(await identity.compressedPublicKey()),
     });
+  });
+
+  it('claims and binds the same receiver in Bare without SubtleCrypto', async (t) => {
+    const respond = (url) => json(url.endsWith('/arkade') ? {} : registered);
+    const baseline = accountWithServer(respond);
+    const token = await baseline.account.getLnurl().token();
+    await baseline.account.dispose();
+
+    const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    t.mock.getter(globalThis, 'crypto', () => ({ getRandomValues }));
+    const { account, identity, fetchImpl } = accountWithServer(respond);
+    t.after(() => account.dispose());
+    const receiver = await account.getLnurl().claim({ username: 'alice' });
+
+    assert.equal(receiver.lightningAddress, registered.lightningAddress);
+    const [, registration] = fetchImpl.mock.calls[0].arguments;
+    const [, binding] = fetchImpl.mock.calls[1].arguments;
+    assert.equal(JSON.parse(registration.body).token, token);
+    assert.equal(binding.headers.Authorization, `Bearer ${token}`);
+    assert.equal(
+      JSON.parse(binding.body).claimPublicKey,
+      hex.encode(await identity.compressedPublicKey())
+    );
   });
 
   it('discovers an existing owned receiver without registration or identity writes', async () => {

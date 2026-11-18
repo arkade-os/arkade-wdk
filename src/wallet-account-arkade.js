@@ -1,10 +1,11 @@
-import { BIP322 } from '@arkade-os/sdk';
+import { BIP322, SingleKey } from '@arkade-os/sdk';
 import { UnsupportedOperationError } from '@tetherto/wdk-wallet';
 import { createLnurlClient } from '@arkade-os/lnurl-client';
 import { arkadeLnurl } from '@arkade-os/lnurl-client/arkade';
+import { HDKey } from '@scure/bip32';
 import { sodium_memzero } from 'sodium-universal';
 import { createPaymentRouter, send } from './lib/send.js';
-import { withAbort } from './lib/abort.js';
+import { combineAbortSignals, throwIfAborted, withAbort } from './lib/abort.js';
 import { WalletAccountReadOnlyArkade } from './wallet-account-read-only-arkade.js';
 
 export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
@@ -39,7 +40,7 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
     this._lnurl = services.lnurl
       ? arkadeLnurl({
           ...services.lnurl,
-          wallet,
+          wallet: lnurlWallet(wallet, keyPair.privateKey),
           client: this._lnurlClient ?? undefined,
           router: this._paymentRouter,
         })
@@ -163,28 +164,44 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
    * @param {import('@arkade-os/lnurl-client').OpenSessionOptions} [options] */
   async openLnurlSession(handlers, options = {}) {
     this._disposeCheck();
-    const signal = AbortSignal.any([
+    const { signal, dispose } = combineAbortSignals([
       this._controller.signal,
       ...(options.signal ? [options.signal] : []),
     ]);
-    const token = options.token ?? (await this.getLnurl().token());
-    signal.throwIfAborted();
-    const opening = this.getLnurlClient().openSession({ ...options, token, signal }, handlers);
-    void opening.then(
-      (session) => {
-        if (signal.aborted) session.close();
-      },
-      () => {}
-    );
-    const session = await withAbort(opening, signal);
-    signal.throwIfAborted();
-    const close = session.close.bind(session);
-    session.close = () => {
-      this._sessions.delete(session);
-      close();
-    };
-    this._sessions.add(session);
-    return session;
+    /** @type {import('@arkade-os/lnurl-client').LnurlSession | undefined} */
+    let opened;
+    try {
+      throwIfAborted(signal);
+      const token = options.token ?? (await withAbort(this.getLnurl().token(), signal));
+      throwIfAborted(signal);
+      const opening = this.getLnurlClient()
+        .openSession({ ...options, token, signal }, handlers)
+        .then((session) => {
+          const close = session.close.bind(session);
+          const onAbort = () => session.close();
+          let closed = false;
+          session.close = () => {
+            if (closed) return;
+            closed = true;
+            this._sessions.delete(session);
+            signal.removeEventListener('abort', onAbort);
+            dispose();
+            close();
+          };
+          opened = session;
+          signal.addEventListener('abort', onAbort, { once: true });
+          if (signal.aborted) session.close();
+          return session;
+        });
+      const session = await withAbort(opening, signal);
+      throwIfAborted(signal);
+      this._sessions.add(session);
+      return session;
+    } catch (error) {
+      dispose();
+      opened?.close();
+      throw error;
+    }
   }
 
   get disposed() {
@@ -219,4 +236,36 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
     }
     return this._disposePromise;
   }
+}
+
+/**
+ * @param {import('@arkade-os/sdk').Wallet} wallet
+ * @param {Uint8Array | null} privateKey
+ * @returns {import('@arkade-os/lnurl-client/arkade').LnurlWallet}
+ */
+function lnurlWallet(wallet, privateKey) {
+  const identity = wallet.identity;
+  if (!privateKey || globalThis.crypto?.subtle || !(identity instanceof SingleKey)) return wallet;
+
+  return {
+    getAddress: () => wallet.getAddress(),
+    getBoardingAddress: () => wallet.getBoardingAddress(),
+    identity: {
+      compressedPublicKey: () => identity.compressedPublicKey(),
+      // Bare lacks SubtleCrypto for the SDK's async ECDSA. LNURL needs a deterministic compact signature.
+      async signMessage(message, type) {
+        if (type !== 'ecdsa') return identity.signMessage(message, type);
+        const publicKey = await identity.compressedPublicKey();
+        const key = new HDKey({ privateKey });
+        try {
+          if (!key.publicKey?.every((byte, i) => byte === publicKey[i])) {
+            throw new Error('LNURL signing key does not match the wallet identity');
+          }
+          return key.sign(message);
+        } finally {
+          key.wipePrivateData();
+        }
+      },
+    },
+  };
 }

@@ -61,9 +61,14 @@ export class WalletAccountReadOnlyArkade extends WalletAccountReadOnly {
 
   /** @returns {Promise<bigint>} */
   async getBalance() {
-    this._disposeCheck();
-    const balance = await this._wallet.getBalance();
+    const balance = await this.getBalanceDetails();
     return BigInt(balance.total);
+  }
+
+  /** @returns {Promise<import('@arkade-os/sdk').WalletBalance>} */
+  async getBalanceDetails() {
+    this._disposeCheck();
+    return this._wallet.getBalance();
   }
 
   /**

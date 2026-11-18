@@ -12,6 +12,7 @@ import { HDKey } from '@scure/bip32';
 import { createSwapClient } from '@arkade-os/swap';
 import { sodium_memzero } from 'sodium-universal';
 import { WalletAccountArkade } from './wallet-account-arkade.js';
+import { withZeroChangeFee } from './lib/send.js';
 
 /** @typedef {import('./types.js').ArkadeWalletConfig} ArkadeWalletConfig */
 
@@ -136,7 +137,7 @@ class WalletManagerArkade extends WalletManager {
         const solverConfig = cfg.solver(path);
         if (!solverConfig.repository)
           throw new Error('Solver swaps require a persistent repository.');
-        solver = createSwapClient({ ...solverConfig, wallet });
+        solver = createSwapClient({ ...solverConfig, wallet: withZeroChangeFee(wallet) });
         await solver.ready;
       }
       const lnurl =

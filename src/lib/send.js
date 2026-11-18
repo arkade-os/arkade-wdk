@@ -17,12 +17,38 @@ import {
 import { lightningRail } from '@arkade-os/swap';
 import { createLnurlClient } from '@arkade-os/lnurl-client';
 import { MaximumFeeExceededError } from '@tetherto/wdk-wallet';
-import { withAbort } from './abort.js';
+import { throwIfAborted, withAbort } from './abort.js';
 import {
   arkadePaymentRouter,
   DEFAULT_RAIL_PRIORITY,
   lnurlRails,
 } from '@arkade-os/lnurl-client/arkade';
+
+/** @param {import('@arkade-os/sdk').IWallet} wallet */
+export function withZeroChangeFee(wallet) {
+  return new Proxy(wallet, {
+    get(target, property) {
+      if (property === 'send') {
+        /** @param {Parameters<import('@arkade-os/sdk').IWallet['send']>} args */
+        return (...args) => {
+          const first = args[0];
+          const params =
+            args.length === 1 && 'recipients' in first
+              ? first
+              : {
+                  recipients:
+                    /** @type {[import('@arkade-os/sdk').Recipient, ...import('@arkade-os/sdk').Recipient[]]} */ (
+                      args
+                    ),
+                };
+          return target.send({ ...params, maxChangeFee: 0 });
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
 
 /**
  * @param {import('@arkade-os/sdk').IWallet} wallet
@@ -30,12 +56,13 @@ import {
  * @returns {import('@arkade-os/lnurl-client/arkade').LnurlPaymentRouter}
  */
 export function createPaymentRouter(wallet, { solver = null, client } = {}) {
-  const concrete = /** @type {import('@arkade-os/sdk').Wallet} */ (wallet);
+  const guarded = withZeroChangeFee(wallet);
+  const concrete = /** @type {import('@arkade-os/sdk').Wallet} */ (guarded);
   const router = createDefaultPaymentRouter(concrete).use(
     cappedOnchainRail(walletFeeSource(concrete))
   );
   const rail = solver ? lightningRail(solver) : undefined;
-  return arkadePaymentRouter({ wallet, router, lightning: rail, client });
+  return arkadePaymentRouter({ wallet: guarded, router, lightning: rail, client });
 }
 
 /**
@@ -155,13 +182,13 @@ export async function quoteSend(options) {
 
 /** @param {SendOptions} options */
 export async function send(options) {
-  options.signal?.throwIfAborted();
+  throwIfAborted(options.signal);
   const timeoutMs = options.paymentTimeoutMs ?? 120_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1) {
     throw new RangeError('Payment timeout must be a positive integer of at most 2147483647 ms');
   }
   const quote = await withAbort(routePayment(options), options.signal);
-  options.signal?.throwIfAborted();
+  throwIfAborted(options.signal);
   const fee = BigInt(quote.fee);
   if (options.maxFee !== undefined && fee > BigInt(options.maxFee)) {
     throw new MaximumFeeExceededError('Payment fee exceeds the configured maximum.', {});

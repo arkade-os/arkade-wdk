@@ -7,6 +7,7 @@ const reads = [
   ['getAddress', []],
   ['getBoardingAddress', []],
   ['getBalance', []],
+  ['getBalanceDetails', []],
   ['getTokenBalance', ['asset']],
   ['getTransactionHistory', []],
   ['getTransaction', ['txid']],

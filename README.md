@@ -60,7 +60,7 @@ chosen quote and waits for its payment handle to settle. Settlement errors do no
 retry through another solver or payment rail.
 
 `paymentTimeoutMs` bounds the caller's settlement wait (default: 120 seconds).
-A timeout does not cancel or reverse a payment. Errors retain `paymentId` and
+A timeout does not cancel or reverse a payment. Settlement errors retain `paymentId` and
 `railId`; reconcile persisted swaps and transaction history before sending again.
 The returned `hash` is the rail's transaction ID, preimage, swap ID, or handle ID;
 it is not necessarily a Bitcoin transaction ID.
@@ -69,6 +69,10 @@ Arkade transfers use the SDK's zero-fee offchain rail. Bitcoin payments use the
 SDK's collaborative exit rail and operator fee schedule. Solver-backed Lightning
 requires the solver configuration below. An LNURL offering a direct Arkade payment
 can be paid without a Lightning solver.
+
+The Arkade rails set the SDK's `maxChangeFee` to zero so a zero-fee quote cannot
+consume dust change as an unreported fee. The SDK must find valid change or refuse
+the send before submission, including asset and direct LNURL payments.
 
 ```javascript
 await account.transfer({ token: assetId, recipient: arkadeAddress, amount: 100n });
@@ -198,6 +202,10 @@ history, transaction reads, signature verification, and fee quotes. Full account
 also provide sending, asset transfers, BIP-322 signing, incoming-fund subscriptions,
 LNURL receiving, and `toReadOnlyAccount()`.
 
+`getBalanceDetails()` returns the SDK's `WalletBalance`, including separate
+boarding, owned, available, and locked amounts. `getBalance()` remains the WDK
+bigint total; display its boarding component separately without adding it twice.
+
 `toReadOnlyAccount()` uses the SDK's `toReadonly()` helper. It supplies no signing
 identity, payment execution methods, or swap client to the returned account.
 Await the returned view's `dispose()` when finished to close its SDK watchers.
@@ -245,7 +253,7 @@ Tests use Node's built-in test runner. Lint includes checked JavaScript via
 `jsconfig.json`. `build:types` generates declarations in ignored `types/`; there is
 no JavaScript compilation step. `npm run format` formats source files.
 
-The package pins SDK `0.5.6`, swap `0.1.6`, lnurl-client `0.9.4`, and nostr-tools
+The package pins SDK `0.5.7`, swap `0.1.7`, lnurl-client `0.9.4`, and nostr-tools
 `2.24.1`. Nostr is pinned to the swap package's exact peer version. Update those
 packages together and validate the generated declarations.
 

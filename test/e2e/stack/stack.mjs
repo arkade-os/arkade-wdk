@@ -7,12 +7,13 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const state = resolve(process.env.WDK_E2E_STATE ?? join(here, '../../../.cache/arkade-wdk-e2e'));
 const regtest = join(state, 'regtest');
 const pin = 'f7c09c136fe316142ba2e9686921f40eae9d7a84';
+const composeFiles = ['compose.base.yml', 'compose.ark.yml', 'compose.evm.yml'];
 const [action, ...args] = process.argv.slice(2);
 const run = (command, argv, capture = false) => execFileSync(command, argv, {
   encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', env: process.env,
 });
 if (!action || action === '--help') {
-  console.log('node test/e2e/stack/stack.mjs prepare | compose <args...> | cards | fund');
+  console.log('node test/e2e/stack/stack.mjs prepare | check | compose <args...> | cards | fund');
   process.exit(0);
 }
 if (action === 'prepare') {
@@ -35,6 +36,16 @@ if (action === 'prepare') {
   const source = readFileSync(base, 'utf8');
   if (!source.includes('10.222.57.0/24')) writeFileSync(base, source.replace(/^volumes:/m,
     'networks:\n  default:\n    ipam:\n      config:\n        - subnet: 10.222.57.0/24\n\nvolumes:'));
+  for (const file of composeFiles) {
+    const path = join(regtest, 'docker', file);
+    const source = readFileSync(path, 'utf8');
+    writeFileSync(path, source.replace(/(^ +ports:\r?\n)((?: +- [^\r\n]+\r?\n)+)/gm,
+      (_, header, bindings) => header + bindings.replace(/^( +- )(.+?)[ \t]*$/gm,
+        (_, indent, binding) => {
+          const port = binding.replace(/^(['"])(.*)\1$/, '$2');
+          return `${indent}'${port.startsWith('127.0.0.1:') ? port : `127.0.0.1:${port}`}'`;
+        })));
+  }
   console.log(`Prepared ${state}; test keys and certificates are regtest-only.`);
   process.exit(0);
 }
@@ -45,10 +56,19 @@ process.env.WDK_E2E_STATE = state.replaceAll('\\', '/');
 const prefix = process.env.REGTEST_CONTAINER_PREFIX;
 const solver = `${prefix}intent-solver`;
 const cli = ['node', '--enable-source-maps', '--experimental-eventsource', 'packages/solver-app/dist/cli.js'];
-if (action === 'compose') {
-  const files = ['compose.base.yml', 'compose.ark.yml', 'compose.evm.yml']
-    .flatMap((file) => ['-f', join(regtest, 'docker', file)]);
-  run('docker', ['compose', '-p', process.env.REGTEST_PROJECT, ...files, '-f', join(here, 'compose.yml'), ...args]);
+const files = composeFiles.flatMap((file) => ['-f', join(regtest, 'docker', file)]);
+const compose = ['compose', '-p', process.env.REGTEST_PROJECT, ...files, '-f', join(here, 'compose.yml')];
+if (action === 'check') {
+  const config = JSON.parse(run('docker', [...compose, '--profile', '*', 'config', '--format', 'json'], true));
+  const ports = Object.entries(config.services).flatMap(([name, service]) =>
+    (service.ports ?? []).map((port) => ({ service: name, ...port })));
+  const unsafe = ports.filter((port) => port.host_ip !== '127.0.0.1');
+  if (!ports.length || unsafe.length) {
+    throw new Error(`Expected only loopback port bindings: ${JSON.stringify(unsafe)}`);
+  }
+  console.log(`Verified ${ports.length} published ports bind only to 127.0.0.1.`);
+} else if (action === 'compose') {
+  run('docker', [...compose, ...args]);
 } else if (action === 'cards') {
   const output = run('docker', ['exec', solver, ...cli, 'card', 'wdk-e2e'], true);
   const card = JSON.parse(output.slice(output.indexOf('{'), output.lastIndexOf('}') + 1));

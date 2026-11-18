@@ -184,10 +184,15 @@ test('WDK funded regtest lifecycle', { timeout: 600_000 }, async () => {
         '--memo=WDK-regtest-send'
       )
     );
+    const lightningBefore = await restarted.getBalance();
     const lightning = await restarted.sendTransaction({
       to: invoice.payment_request,
       value: 2000n,
     });
+    await until(
+      async () => lightningBefore - (await restarted.getBalance()) === 2000n + lightning.fee,
+      'exact Lightning send fee'
+    );
     const invoiceState = JSON.parse(
       await docker('lnd-peer', 'lncli', '--network=regtest', 'lookupinvoice', invoice.r_hash)
     );

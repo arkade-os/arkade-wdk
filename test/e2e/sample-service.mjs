@@ -33,7 +33,9 @@ const prefix = process.env.ARKADE_E2E_CONTAINER_PREFIX ?? 'wdk-e2e-';
 const selected = new Set(['setConfig', 'getChainsConfig', 'onArkadeBalanceChange',
   'notifyArkadeBalanceListeners', 'initArkadeWallet', 'createWallet', 'quoteSendByNetwork',
   'sendByNetwork', 'getDenominationValue', 'getLnurlReceiver', 'getBoardingAddress',
-  'requireArkadeSwapClient', 'getSwapMarkets', 'createLightningInvoice', 'clearWallet']);
+  'requireArkadeSwapClient', 'getSwapMarkets', 'createLightningInvoice', 'clearWallet',
+  'walletLifecycle', 'withWalletLifecycle', 'clearWalletState', 'initializeArkadeWallet',
+  'createWalletState', 'getArkadeAccount']);
 const file = path.join(provider, 'src/services/wdk-service/index.ts');
 const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
 const declaration = source.statements.find(ts.isClassDeclaration);
@@ -146,7 +148,10 @@ function report(step, data) { console.log(JSON.stringify({ step, ...data }, (_, 
     await until(async () => (await receiver.arkadeAccount.getBalance()) === 4000n, 'sample Lightning receive');
     report('sample-lightning-receive', { paymentHash: incoming.paymentHash, receiveSats: 2000 });
     const invoice = JSON.parse(await docker('lnd-peer', 'lncli', '--network=regtest', 'addinvoice', '--amt=1000', '--memo=WDK-sample-E2E'));
+    const beforeLightning = await sender.arkadeAccount.getBalance();
     const paid = await sender.sendByNetwork(types.NetworkType.LIGHTNING, 0, 0.00001, invoice.payment_request, types.AssetTicker.BTC);
+    await until(async () => beforeLightning - (await sender.arkadeAccount.getBalance()) === 1000n + paid.fee, 'exact sample Lightning send fee');
+    assert.equal(JSON.parse(await docker('lnd-peer', 'lncli', '--network=regtest', 'lookupinvoice', invoice.r_hash)).state, 'SETTLED');
     report('sample-lightning-send', { hash: paid.hash, fee: paid.fee });
     const retainedBalance = await sender.arkadeAccount.getBalance();
     await Promise.all(services.map(async entry => {

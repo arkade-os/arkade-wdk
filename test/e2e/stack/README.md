@@ -10,6 +10,7 @@ Run from the repository root. On Windows, when OpenSSL is not on PATH, set
 
 ```text
 node test/e2e/stack/stack.mjs prepare
+node test/e2e/stack/stack.mjs check
 node .cache/arkade-wdk-e2e/regtest/regtest.mjs start --env .cache/arkade-wdk-e2e/stack.env --profile ark --profile emulator --profile lightning --profile nostr --profile covclaimd
 node test/e2e/stack/stack.mjs compose up -d --wait nostr-tls intent-solver
 node test/e2e/stack/stack.mjs fund
@@ -33,7 +34,8 @@ npm run test:e2e
 POSIX shell:
 
 ```sh
-NODE_EXTRA_CA_CERTS="$PWD/.cache/arkade-wdk-e2e/tls/cert.pem" npm run test:e2e
+export NODE_EXTRA_CA_CERTS="$PWD/.cache/arkade-wdk-e2e/tls/cert.pem"
+npm run test:e2e
 ```
 
 Arkd is `http://localhost:57020`, Esplora `http://localhost:57000/api`, emulator
@@ -51,6 +53,9 @@ The default project is `arkade-wdk-e2e`, prefix `wdk-e2e-`, ports 57000–57033 
 subnet `10.222.57.0/24`. Do not start another stack using those names or ports.
 `WDK_E2E_STATE` may select another state directory for the helper; adjust the
 literal official-CLI paths above accordingly. Existing Docker stacks are preserved.
+`prepare` binds every published port in the pinned official Compose files to
+`127.0.0.1`, including Postgres with regtest trust authentication. `check` rejects
+any published port without that explicit loopback address before starting services.
 
 Stop and retain recovery evidence:
 

@@ -5,7 +5,7 @@
  */
 
 import { execSync } from 'child_process';
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync } from 'fs';
 import { dirname, join, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -69,22 +69,6 @@ console.log('\n3. Installing arkade-wdk dependencies...');
 run('npm install --include=dev');
 run('npm run build:types');
 
-// Patch bare-url@2.3.0 with the isURLSearchParams export that bare-fetch@2.8.2
-// expects from bare-url@^2.4.0. Our npm override pins bare-url to 2.3.0 (the
-// newest version react-native-bare-kit ships), but that version lacks this
-// export. Adding it here avoids a runtime TypeError inside the worklet.
-const bareUrlIndex = join(PROJECT_ROOT, 'node_modules', 'bare-url', 'index.js');
-try {
-  const src = readFileSync(bareUrlIndex, 'utf8');
-  if (!src.includes('isURLSearchParams')) {
-    const patch = `\nexports.isURLSearchParams = function isURLSearchParams(value) { return value instanceof URLSearchParams }\n`;
-    writeFileSync(bareUrlIndex, src + patch);
-    console.log('  patched bare-url with isURLSearchParams');
-  }
-} catch (err) {
-  console.warn('  (bare-url patch skipped — file not found or unwritable:', err.message, ')');
-}
-
 // Setup pear-wrk-wdk submodule
 console.log('\n4. Setting up pear-wrk-wdk...');
 const pearWrkDir = join(PROJECT_ROOT, 'packages', 'pear-wrk-wdk');
@@ -97,15 +81,6 @@ run('npm install --include=dev --ignore-scripts', pearWrkDir);
 // because npm link's internal install can prune other deps and replace
 // the symlink with a snapshot if any later command runs npm install.
 linkPackage(PROJECT_ROOT, pearWrkDir);
-// Link shim packages into pear-wrk-wdk's node_modules.
-// pack.imports.json maps `bare-type` → `bare-type-jsshim` and
-// `bare-performance` → `bare-performance-jsshim`. Without these shims,
-// the worklet bundle includes native binding.js files that try to load
-// .so libraries react-native-bare-kit doesn't ship at matching versions.
-linkPackage(join(pearWrkDir, 'shims', 'bare-abort-jsshim'), pearWrkDir);
-linkPackage(join(pearWrkDir, 'shims', 'bare-performance-jsshim'), pearWrkDir);
-linkPackage(join(pearWrkDir, 'shims', 'bare-stdio-jsshim'), pearWrkDir);
-linkPackage(join(pearWrkDir, 'shims', 'bare-type-jsshim'), pearWrkDir);
 run('npm run build:types', pearWrkDir);
 // Now generate the mobile bundle — the @arkade-os/wdk symlink is in place.
 run('npm run gen:mobile-bundle', pearWrkDir);
@@ -137,20 +112,16 @@ for (const peer of ['react', 'react-native', 'react-dom', '@types/react']) {
 // Setup wdk-starter-react-native example
 console.log('\n6. Setting up wdk-starter-react-native example...');
 const exampleDir = join(PROJECT_ROOT, 'examples', 'wdk-starter-react-native');
-// Install without scripts to avoid issues with missing linked packages
-run('npm install --include=dev --ignore-scripts', exampleDir);
+// Published provider metadata still requires the old BareKit peer. Step 7
+// replaces it with the patched local provider.
+run('npm install --include=dev --ignore-scripts --legacy-peer-deps', exampleDir);
 
-// Install expo-crypto for Arkade support (if not already installed)
-console.log('\n7. Ensuring expo-crypto is installed...');
-run('npx expo install expo-crypto', exampleDir);
-
-// Link local packages AFTER expo install (which would otherwise overwrite
-// symlinks). We use direct fs symlinks rather than `npm link` because npm
+// Link local packages after installation. We use direct fs symlinks rather than `npm link` because npm
 // re-runs the provider's `prepare` script (which runs bob build → tsc) and
 // that would fail here: step 5 deleted react/react-native from the provider's
 // node_modules, so its tsc can no longer resolve `react`. The provider is
 // already built; we only need the symlinks.
-console.log('\n8. Linking local packages into example app...');
+console.log('\n7. Linking local packages into example app...');
 linkPackage(PROJECT_ROOT, exampleDir);
 linkPackage(pearWrkDir, exampleDir);
 linkPackage(providerDir, exampleDir);

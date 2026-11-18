@@ -124,9 +124,14 @@ describe('Asset Support', () => {
     });
 
     assert.deepEqual(mockSend.mock.calls[0].arguments[0], {
-      address: recipient,
-      amount: 330,
-      assets: [{ assetId: 'asset-aaa', amount: 100n }],
+      recipients: [
+        {
+          address: recipient,
+          amount: 330,
+          assets: [{ assetId: 'asset-aaa', amount: 100n }],
+        },
+      ],
+      maxChangeFee: 0,
     });
     assert.equal(result.hash, 'txid-abc123');
     assert.equal(result.fee, 0n);
@@ -171,9 +176,32 @@ describe('Asset Support', () => {
 });
 
 describe('Base class conformance', () => {
+  it('preserves SDK balance details so boarding and offchain funds can be displayed once', async () => {
+    const details = {
+      total: 1500,
+      available: 900,
+      settled: 1000,
+      boarding: { total: 500, confirmed: 300, unconfirmed: 200, loaded: true },
+      contractLocked: 100,
+      assets: [],
+    };
+    const account = new WalletAccountReadOnlyArkade(
+      'ark1readonly',
+      { getBalance: async () => details },
+      {},
+      Promise.resolve({})
+    );
+    assert.equal(await account.getBalanceDetails(), details);
+    assert.equal(await account.getBalance(), 1500n);
+  });
   it('disposes a readonly SDK view once so its watchers can close', async () => {
     const dispose = mock.fn(async () => {});
-    const account = new WalletAccountReadOnlyArkade('ark1readonly', { dispose }, {}, Promise.resolve({}));
+    const account = new WalletAccountReadOnlyArkade(
+      'ark1readonly',
+      { dispose },
+      {},
+      Promise.resolve({})
+    );
     await Promise.all([account.dispose(), account.dispose()]);
     assert.equal(dispose.mock.callCount(), 1);
   });
@@ -227,8 +255,13 @@ describe('Base class conformance', () => {
       finish = resolve;
     });
     let markStopStarted;
-    const stopStarted = new Promise((resolve) => { markStopStarted = resolve; });
-    const stop = mock.fn(() => { markStopStarted(); return stopped; });
+    const stopStarted = new Promise((resolve) => {
+      markStopStarted = resolve;
+    });
+    const stop = mock.fn(() => {
+      markStopStarted();
+      return stopped;
+    });
     const solver = { [Symbol.asyncDispose]: stop };
     const privateKey = new Uint8Array(32).fill(0xab);
     const account = new WalletAccountArkade(

@@ -47,7 +47,10 @@ describe('SDK payment router integration', () => {
     });
     assert.equal(signingWallet.send.mock.callCount(), 0);
     assert.deepEqual(await send({ router, to: ARK, amount: 1234n }), { txid: 'ark-tx', fee: 0n });
-    assert.deepEqual(signingWallet.send.mock.calls[0].arguments[0], { address: ARK, amount: 1234 });
+    assert.deepEqual(signingWallet.send.mock.calls[0].arguments[0], {
+      recipients: [{ address: ARK, amount: 1234 }],
+      maxChangeFee: 0,
+    });
   });
 
   it('keeps the SDK asset carrier and zero offchain fee', async () => {
@@ -56,9 +59,8 @@ describe('SDK payment router integration', () => {
     const assets = [{ assetId: 'a'.repeat(64), amount: 500n }];
     await send({ router, to: ARK, amount: 0n, assets });
     assert.deepEqual(signingWallet.send.mock.calls[0].arguments[0], {
-      address: ARK,
-      amount: 330,
-      assets,
+      recipients: [{ address: ARK, amount: 330, assets }],
+      maxChangeFee: 0,
     });
   });
 
@@ -73,7 +75,10 @@ describe('SDK payment router integration', () => {
       to: `bitcoin:${BTC}?ark=${ARK}&amount=0.00001&lightning=lnurl1unused`,
       amount: 0n,
     });
-    assert.deepEqual(signingWallet.send.mock.calls[0].arguments[0], { address: ARK, amount: 1000 });
+    assert.deepEqual(signingWallet.send.mock.calls[0].arguments[0], {
+      recipients: [{ address: ARK, amount: 1000 }],
+      maxChangeFee: 0,
+    });
   });
 
   it('refuses a conflicting URI amount before quoting or spending', async () => {
@@ -214,7 +219,10 @@ describe('LNURL client routing', () => {
       txid: 'ark-tx',
       fee: 0n,
     });
-    assert.deepEqual(signingWallet.send.mock.calls[0].arguments[0], { address: ARK, amount: 1500 });
+    assert.deepEqual(signingWallet.send.mock.calls[0].arguments[0], {
+      recipients: [{ address: ARK, amount: 1500 }],
+      maxChangeFee: 0,
+    });
   });
 
   it('fetches and pays a BOLT11 through the shared LNURL client', async () => {

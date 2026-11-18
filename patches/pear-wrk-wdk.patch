@@ -24,25 +24,38 @@ index 3931ba9..e8d61c6 100644
 
  // Export spec/schema
 diff --git a/pack.imports.json b/pack.imports.json
-index bcaef0c..02cdc5b 100644
+index bcaef0c..f08c17e 100644
 --- a/pack.imports.json
 +++ b/pack.imports.json
-@@ -1,3 +1,8 @@
+@@ -1,3 +1,3 @@
  {
--  "http": "bare-http1"
-+  "http": "bare-http1",
-+  "bare-abort": "bare-abort-jsshim",
-+  "bare-stdio": "bare-stdio-jsshim",
-+  "bare-type": "bare-type-jsshim",
-+  "bare-performance": "bare-performance-jsshim",
-+  "bare-performance/global": "bare-performance-jsshim/global"
- }
+   "http": "bare-http1"
+-}
 \ No newline at end of file
++}
 diff --git a/package-lock.json b/package-lock.json
-index 1ba00ef..07a906d 100644
+index 1ba00ef..98099eb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -1873,7 +1873,7 @@
+@@ -1657,17 +1657,6 @@
+         "superstruct": "^2.0.2"
+       }
+     },
+-    "node_modules/@solana/web3.js/node_modules/encoding": {
+-      "version": "0.1.13",
+-      "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
+-      "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
+-      "license": "MIT",
+-      "optional": true,
+-      "peer": true,
+-      "dependencies": {
+-        "iconv-lite": "^0.6.2"
+-      }
+-    },
+     "node_modules/@solana/web3.js/node_modules/node-fetch": {
+       "version": "2.7.0",
+       "resolved": "https://registry.npmjs.org/node-fetch/-/node-fetch-2.7.0.tgz",
+@@ -1873,7 +1862,7 @@
      },
      "node_modules/@wdk/wallet": {
        "version": "1.0.0-beta.1",
@@ -51,7 +64,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-PfCaoBWFS0c+FuJRexdQWOtcB+x2z0pK0QtLAEaB82H74bBzmQZpsE6wV+mNqgggtNfz5Pp3b35Cu5lQ8l0wdw==",
        "dependencies": {
          "bare-wdk-runtime": "2.0.0",
-@@ -1882,7 +1882,7 @@
+@@ -1882,7 +1871,7 @@
      },
      "node_modules/@wdk/wallet-btc": {
        "version": "1.0.0-beta.1",
@@ -60,7 +73,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-LUb5jzm98AgOEWtR5pNMottf9i2M9b3YU+9474i2kFMhhVybCspnMXugdf4cTeOb9BUYkdkaDH17bw47zZYqcQ==",
        "dependencies": {
          "@bitcoinerlab/secp256k1": "1.2.0",
-@@ -1897,7 +1897,7 @@
+@@ -1897,7 +1886,7 @@
      },
      "node_modules/@wdk/wallet-evm": {
        "version": "1.0.0-beta.1",
@@ -69,7 +82,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-vrbfYPcmloFjEFY0AK9hN9EyCEF8g6w/N4WPkpr12klEGjXUjb7+Q+VWI/HJTWFxmHhJKlYT85GVZKgAD5kY7g==",
        "dependencies": {
          "@noble/curves": "1.9.2",
-@@ -1911,7 +1911,7 @@
+@@ -1911,7 +1900,7 @@
      },
      "node_modules/@wdk/wallet-evm-erc-4337": {
        "version": "1.0.0-beta.1",
@@ -78,7 +91,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-DzoyeTK2ul6P8W0TxC7313F0QRw0va6NhvoQ0CKZekwgQtK7YbG00TEj+RpDtIA/14LgaoBo+oyPVwYdoMMp4g==",
        "dependencies": {
          "@wdk-safe-global/relay-kit": "4.1.0",
-@@ -2017,7 +2017,7 @@
+@@ -2017,7 +2006,7 @@
      },
      "node_modules/@wdk/wallet-solana": {
        "version": "1.0.0-beta.1",
@@ -87,7 +100,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-1TOAIZ9FYylUudJSyC1DBtlbnRrJO0omMChHXO9VYYRSbw8q1URST0e1r/ImWjcixo+e7lyBVNtPqBAJfaRcKQ==",
        "dependencies": {
          "@solana-program/system": "0.7.0",
-@@ -2034,7 +2034,7 @@
+@@ -2034,7 +2023,7 @@
      },
      "node_modules/@wdk/wallet-ton": {
        "version": "1.0.0-beta.1",
@@ -96,7 +109,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-jvUTUT9KM2lz2LX37OLhI1B9aASo4O82p0jcHxFUQ/ninmX1IH4LiGzzG1gFmYeZ+VaDWBcOQP4sn1kpIY6LOQ==",
        "dependencies": {
          "@ton/crypto": "3.3.0",
-@@ -2050,7 +2050,7 @@
+@@ -2050,7 +2039,7 @@
      },
      "node_modules/@wdk/wallet-ton-gasless": {
        "version": "1.0.0-beta.1",
@@ -105,7 +118,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-pdKpA8zbenSKeD1LrpqTMdFXHwBXAZZavIulQx/gl6k8PqP50Y9WNtnN4IDpzO4TpoIRZqrfnkbrni4d5ZRU1g==",
        "dependencies": {
          "@ton-api/client": "0.4.0",
-@@ -2090,7 +2090,7 @@
+@@ -2090,7 +2079,7 @@
      },
      "node_modules/@wdk/wallet-tron": {
        "version": "1.0.0-beta.1",
@@ -114,7 +127,7 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-kVuF+TLKq9XG4oPA14dTS4LYs/Qs95rXnyXWJHte3ypew5mN4Yr5aPZQCsOmecmdrknU5tueNGAQxI/Ng7aVfw==",
        "dependencies": {
          "@noble/curves": "1.9.2",
-@@ -2106,7 +2106,7 @@
+@@ -2106,7 +2095,7 @@
      },
      "node_modules/@wdk/wallet-tron-gasfree": {
        "version": "1.0.0-beta.1",
@@ -123,8 +136,60 @@ index 1ba00ef..07a906d 100644
        "integrity": "sha512-pJUGHNn26Dyv/pbeN9HTcnp+SH6DuENN6WWTCOHr2GxojrrrwGxBaJnmgq1DrgXoh8xxR3KEbX029kpp1IvQTA==",
        "dependencies": {
          "@noble/curves": "1.9.2",
+@@ -3054,11 +3043,12 @@
+       }
+     },
+     "node_modules/bare-url": {
+-      "version": "2.2.2",
+-      "resolved": "https://registry.npmjs.org/bare-url/-/bare-url-2.2.2.tgz",
+-      "integrity": "sha512-g+ueNGKkrjMazDG3elZO1pNs3HY5+mMmOet1jtKyhOaCnkLzitxf26z7hoAEkDNgdNmnc1KIlt/dw6Po6xZMpA==",
++      "version": "2.5.8",
++      "resolved": "https://registry.npmjs.org/bare-url/-/bare-url-2.5.8.tgz",
++      "integrity": "sha512-G5KTe5Bj6z5pqIxcn3lWlIFIv0rkXbccx0T0Xuf7t4RapfSWvFlcVbrwYXxFZ00PC4lp57OCIk6uXP/r3GbpDw==",
+       "license": "Apache-2.0",
+       "dependencies": {
++        "bare-buffer": "^3.0.0",
+         "bare-path": "^3.0.0"
+       }
+     },
+@@ -5434,20 +5424,6 @@
+         "generate-string": "^1.0.1"
+       }
+     },
+-    "node_modules/iconv-lite": {
+-      "version": "0.6.3",
+-      "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
+-      "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
+-      "license": "MIT",
+-      "optional": true,
+-      "peer": true,
+-      "dependencies": {
+-        "safer-buffer": ">= 2.1.2 < 3.0.0"
+-      },
+-      "engines": {
+-        "node": ">=0.10.0"
+-      }
+-    },
+     "node_modules/ieee754": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz",
+@@ -7312,14 +7288,6 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
+-    "node_modules/safer-buffer": {
+-      "version": "2.1.2",
+-      "resolved": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+-      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+-      "license": "MIT",
+-      "optional": true,
+-      "peer": true
+-    },
+     "node_modules/safety-catch": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/safety-catch/-/safety-catch-1.0.2.tgz",
 diff --git a/package.json b/package.json
-index 83a4a5c..5247d9f 100644
+index 83a4a5c..3bbc30e 100644
 --- a/package.json
 +++ b/package.json
 @@ -3,13 +3,14 @@
@@ -146,6 +211,604 @@ index 83a4a5c..5247d9f 100644
    },
    "dependencies": {
      "@wdk/wallet": "https://github.com/tetherto/wdk-wallet#integration-rn-starter",
+@@ -32,6 +33,9 @@
+     "standard": "17.1.2",
+     "typescript": "5.8.3"
+   },
++  "overrides": {
++    "bare-url": "2.5.8"
++  },
+   "author": "Tether",
+   "license": "Apache-2.0",
+   "publishConfig": {
+diff --git a/shims/bare-abort-jsshim/index.js b/shims/bare-abort-jsshim/index.js
+deleted file mode 100644
+index 23a22aa..0000000
+--- a/shims/bare-abort-jsshim/index.js
++++ /dev/null
+@@ -1,8 +0,0 @@
+-// Pure-JS shim for bare-abort. The upstream package calls a native addon to
+-// trigger an immediate process abort. In the RN worklet context there's no
+-// meaningful abort — throwing is the closest JS equivalent.
+-'use strict'
+-
+-module.exports = function abort () {
+-  throw new Error('process.abort() called (bare-abort-jsshim)')
+-}
+diff --git a/shims/bare-abort-jsshim/package.json b/shims/bare-abort-jsshim/package.json
+deleted file mode 100644
+index 2a2beba..0000000
+--- a/shims/bare-abort-jsshim/package.json
++++ /dev/null
+@@ -1,6 +0,0 @@
+-{
+-  "name": "bare-abort-jsshim",
+-  "version": "1.0.0",
+-  "main": "./index.js",
+-  "license": "Apache-2.0"
+-}
+diff --git a/shims/bare-performance-jsshim/global.js b/shims/bare-performance-jsshim/global.js
+deleted file mode 100644
+index 5ba967f..0000000
+--- a/shims/bare-performance-jsshim/global.js
++++ /dev/null
+@@ -1,12 +0,0 @@
+-// Mirrors bare-performance/global.js — sets up the global performance API
+-// using the JS shim instead of the native addon.
+-'use strict'
+-
+-const performance = require('.')
+-
+-global.performance = performance
+-global.PerformanceEntry = performance.PerformanceEntry
+-global.PerformanceMark = performance.PerformanceMark
+-global.PerformanceMeasure = performance.PerformanceMeasure
+-global.PerformanceObserver = performance.PerformanceObserver
+-global.PerformanceObserverEntryList = performance.PerformanceObserverEntryList
+diff --git a/shims/bare-performance-jsshim/index.js b/shims/bare-performance-jsshim/index.js
+deleted file mode 100644
+index 0f75627..0000000
+--- a/shims/bare-performance-jsshim/index.js
++++ /dev/null
+@@ -1,205 +0,0 @@
+-// Pure-JS shim for bare-performance. The upstream package uses a native addon
+-// (libbare-performance.so) for high-resolution timing and histogram stats.
+-// react-native-bare-kit doesn't ship the matching version, and downgrading
+-// breaks the dep tree. This shim replaces the native binding with Date-based
+-// fallbacks — precise enough for the Arkade wallet's use case (diagnostics,
+-// not microsecond-accuracy benchmarks).
+-'use strict'
+-
+-const TIME_ORIGIN = Date.now()
+-
+-exports.now = function now () {
+-  return Date.now() - TIME_ORIGIN
+-}
+-
+-exports.eventLoopUtilization = function eventLoopUtilization () {
+-  return { idle: 0, active: 0, utilization: 0 }
+-}
+-
+-exports.idleTime = function idleTime () {
+-  return 0
+-}
+-
+-exports.metricsInfo = function metricsInfo () {
+-  return {}
+-}
+-
+-exports.timeOrigin = TIME_ORIGIN
+-
+-exports.performance = exports
+-
+-class PerformanceNodeTiming {
+-  get idleTime () { return 0 }
+-  get uvMetricsInfo () { return {} }
+-}
+-
+-exports.nodeTiming = new PerformanceNodeTiming()
+-
+-// --- Performance Timeline (mark / measure / observer) ---
+-
+-const observerType = { UNDEFINED: 1, SINGLE: 2, MULTIPLE: 3 }
+-
+-class InvalidModificationError extends Error {
+-  get name () { return 'InvalidModificationError' }
+-}
+-
+-const globalObservers = new Set()
+-const globalPendingObservers = new Set()
+-let globalBuffer = []
+-let pending = false
+-
+-class PerformanceEntry {
+-  constructor (name, type, start, duration) {
+-    this._name = name; this._type = type; this._start = start; this._duration = duration
+-  }
+-  get name () { return this._name }
+-  get entryType () { return this._type }
+-  get startTime () { return this._start }
+-  get duration () { return this._duration }
+-}
+-exports.PerformanceEntry = PerformanceEntry
+-
+-class PerformanceMark extends PerformanceEntry {
+-  constructor (name, opts = {}) {
+-    const { startTime = exports.now(), detail = null } = opts
+-    super(name, 'mark', startTime, 0)
+-    this._detail = detail
+-  }
+-  get detail () { return this._detail }
+-}
+-exports.PerformanceMark = PerformanceMark
+-
+-class PerformanceMeasure extends PerformanceEntry {
+-  constructor (name, startTime, duration, opts = {}) {
+-    const { detail = null } = opts
+-    super(name, 'measure', startTime, duration)
+-    this._detail = detail
+-  }
+-  get detail () { return this._detail }
+-}
+-exports.PerformanceMeasure = PerformanceMeasure
+-
+-class PerformanceObserverEntryList {
+-  constructor (entryList) { this._list = entryList }
+-  getEntries () { return this._list }
+-  getEntriesByType (type) { return this._list.filter(e => e.entryType === type) }
+-  getEntriesByName (name) { return this._list.filter(e => e.name === name) }
+-}
+-exports.PerformanceObserverEntryList = PerformanceObserverEntryList
+-
+-class PerformanceObserver {
+-  constructor (cb) {
+-    this._entryTypes = new Set()
+-    this._type = observerType.UNDEFINED
+-    this._buffer = []
+-    this._cb = cb
+-  }
+-  static get supportedEntryTypes () { return ['mark', 'measure'] }
+-  observe (opts = {}) {
+-    if ((!opts.entryTypes && !opts.type) || (opts.entryTypes && opts.type)) {
+-      throw new TypeError('opts.entryTypes OR opts.type must be specified')
+-    }
+-    if ((this._type === observerType.MULTIPLE && opts.type) || (this._type === observerType.SINGLE && opts.entryTypes)) {
+-      throw new InvalidModificationError('Cannot change the PerformanceObserver type')
+-    }
+-    if (this._type === observerType.UNDEFINED) {
+-      this._type = opts.entryTypes ? observerType.MULTIPLE : observerType.SINGLE
+-    }
+-    this._entryTypes.clear()
+-    const types = opts.entryTypes || [opts.type]
+-    for (const t of types) {
+-      if (PerformanceObserver.supportedEntryTypes.includes(t)) this._entryTypes.add(t)
+-    }
+-    if (this._entryTypes.size > 0) globalObservers.add(this)
+-    else this.disconnect()
+-  }
+-  takeRecords () { const buf = this._buffer; this._buffer = []; return buf }
+-  disconnect () { globalObservers.delete(this); this._entryTypes.clear(); this._type = observerType.UNDEFINED }
+-}
+-exports.PerformanceObserver = PerformanceObserver
+-
+-function processEntry (entry) {
+-  for (const observer of globalObservers) {
+-    if (observer._entryTypes.has(entry.entryType)) {
+-      observer._buffer.push(entry)
+-      globalPendingObservers.add(observer)
+-      processPendingObservers()
+-    }
+-  }
+-}
+-
+-function processPendingObservers () {
+-  if (pending) return
+-  pending = true
+-  setTimeout(() => {
+-    pending = false
+-    const observers = Array.from(globalPendingObservers.values())
+-    globalPendingObservers.clear()
+-    for (const observer of observers) {
+-      observer._cb(new PerformanceObserverEntryList(observer.takeRecords()), observer)
+-    }
+-  }, 0)
+-}
+-
+-exports.mark = function mark (name, opts) {
+-  const m = new PerformanceMark(name, opts)
+-  processEntry(m)
+-  globalBuffer.push(m)
+-  return m
+-}
+-
+-exports.clearMarks = function clearMarks (name) {
+-  globalBuffer = name
+-    ? globalBuffer.filter(e => !(e.name === name && e.entryType === 'mark'))
+-    : globalBuffer.filter(e => e.entryType !== 'mark')
+-}
+-
+-exports.measure = function measure (name, start, end) {
+-  const startTime = typeof start === 'number' ? start : 0
+-  const endTime = typeof end === 'number' ? end : exports.now()
+-  const m = new PerformanceMeasure(name, startTime, endTime - startTime)
+-  processEntry(m)
+-  globalBuffer.push(m)
+-  return m
+-}
+-
+-exports.clearMeasures = function clearMeasures (name) {
+-  globalBuffer = name
+-    ? globalBuffer.filter(e => !(e.name === name && e.entryType === 'measure'))
+-    : globalBuffer.filter(e => e.entryType !== 'measure')
+-}
+-
+-exports.getEntries = function getEntries () { return new PerformanceObserverEntryList(globalBuffer).getEntries() }
+-exports.getEntriesByName = function getEntriesByName (name) { return new PerformanceObserverEntryList(globalBuffer).getEntriesByName(name) }
+-exports.getEntriesByType = function getEntriesByType (type) { return new PerformanceObserverEntryList(globalBuffer).getEntriesByType(type) }
+-
+-// Histogram — stub. The native binding provides nanosecond-precision HDR
+-// histograms; this JS stub records nothing and returns zeroes. Good enough
+-// for the Arkade wallet (nobody calls createHistogram / monitorEventLoopDelay
+-// in the hot path).
+-class Histogram {
+-  get max () { return 0 }
+-  get min () { return 0 }
+-  get mean () { return 0 }
+-  get percentiles () { return new Map() }
+-  get stddev () { return 0 }
+-  get count () { return 0 }
+-  get exceeds () { return 0 }
+-  percentile () { return 0 }
+-  reset () {}
+-}
+-
+-class RecordableHistogram extends Histogram {
+-  add () {}
+-  record () {}
+-}
+-
+-exports.createHistogram = function createHistogram () { return new RecordableHistogram() }
+-
+-class IntervalHistogram extends Histogram {
+-  enable () { return true }
+-  disable () { return true }
+-  [Symbol.dispose] () { this.disable() }
+-}
+-
+-exports.monitorEventLoopDelay = function monitorEventLoopDelay () { return new IntervalHistogram() }
+diff --git a/shims/bare-performance-jsshim/package.json b/shims/bare-performance-jsshim/package.json
+deleted file mode 100644
+index 09a403a..0000000
+--- a/shims/bare-performance-jsshim/package.json
++++ /dev/null
+@@ -1,7 +0,0 @@
+-{
+-  "name": "bare-performance-jsshim",
+-  "version": "1.0.0",
+-  "description": "Pure-JS replacement for bare-performance, used by bare-pack via pack.imports.json so the worklet doesn't need libbare-performance.so at runtime.",
+-  "main": "./index.js",
+-  "license": "Apache-2.0"
+-}
+diff --git a/shims/bare-stdio-jsshim/index.js b/shims/bare-stdio-jsshim/index.js
+deleted file mode 100644
+index 60370e7..0000000
+--- a/shims/bare-stdio-jsshim/index.js
++++ /dev/null
+@@ -1,22 +0,0 @@
+-// Pure-JS shim for bare-stdio. The upstream package wraps fd 0/1/2 using
+-// bare-tty, bare-pipe, and bare-fs — all of which need native addons that
+-// react-native-bare-kit may not ship. In the RN worklet context, stdin/
+-// stdout/stderr are not meaningfully available; this shim provides no-op
+-// streams so consumers that probe process.stdin/stdout/stderr don't crash.
+-'use strict'
+-
+-const { Writable, Readable } = require('streamx')
+-
+-class NullWritable extends Writable {
+-  _write (data, cb) { cb(null) }
+-}
+-
+-class NullReadable extends Readable {
+-  _read (cb) { this.push(null); cb(null) }
+-}
+-
+-module.exports = {
+-  get in () { return new NullReadable() },
+-  get out () { return new NullWritable() },
+-  get err () { return new NullWritable() }
+-}
+diff --git a/shims/bare-stdio-jsshim/package.json b/shims/bare-stdio-jsshim/package.json
+deleted file mode 100644
+index 44c5d88..0000000
+--- a/shims/bare-stdio-jsshim/package.json
++++ /dev/null
+@@ -1,6 +0,0 @@
+-{
+-  "name": "bare-stdio-jsshim",
+-  "version": "1.0.0",
+-  "main": "./index.js",
+-  "license": "Apache-2.0"
+-}
+diff --git a/shims/bare-type-jsshim/index.js b/shims/bare-type-jsshim/index.js
+deleted file mode 100644
+index efc6435..0000000
+--- a/shims/bare-type-jsshim/index.js
++++ /dev/null
+@@ -1,261 +0,0 @@
+-// Pure-JS shim for the `bare-type` package, used by bare-pack via
+-// pack.imports.json. The upstream package uses a native addon
+-// (libbare-type.so) that react-native-bare-kit doesn't ship, so the
+-// worklet would otherwise fail at runtime with ADDON_NOT_FOUND when
+-// any transitive dep (e.g. bare-utils → node:util/types) walks the
+-// type-predicate path.
+-//
+-// The native version returns a packed numeric type code; the JS shim
+-// captures the value and answers `is*` queries via standard typeof /
+-// instanceof / Symbol.toStringTag checks. Predicates that can only be
+-// answered by a native runtime (Proxy, External, ModuleNamespace) are
+-// stubbed to `false`, which matches what bare-utils consumers do —
+-// they treat unknown types as "not that".
+-'use strict'
+-
+-class Type {
+-  constructor(value) {
+-    this._value = value
+-    this._typeof = typeof value
+-  }
+-
+-  isUndefined() {
+-    return this._typeof === 'undefined'
+-  }
+-
+-  isNull() {
+-    return this._value === null
+-  }
+-
+-  isBoolean() {
+-    return this._typeof === 'boolean'
+-  }
+-
+-  isNumber() {
+-    return this._typeof === 'number'
+-  }
+-
+-  isInt32() {
+-    return (
+-      this._typeof === 'number' &&
+-      Number.isInteger(this._value) &&
+-      this._value >= -0x80000000 &&
+-      this._value <= 0x7fffffff
+-    )
+-  }
+-
+-  isUint32() {
+-    return (
+-      this._typeof === 'number' &&
+-      Number.isInteger(this._value) &&
+-      this._value >= 0 &&
+-      this._value <= 0xffffffff
+-    )
+-  }
+-
+-  isString() {
+-    return this._typeof === 'string'
+-  }
+-
+-  isSymbol() {
+-    return this._typeof === 'symbol'
+-  }
+-
+-  isObject() {
+-    return this._typeof === 'object' && this._value !== null
+-  }
+-
+-  isArray() {
+-    return Array.isArray(this._value)
+-  }
+-
+-  isArguments() {
+-    return Object.prototype.toString.call(this._value) === '[object Arguments]'
+-  }
+-
+-  isDate() {
+-    return this._value instanceof Date
+-  }
+-
+-  isRegExp() {
+-    return this._value instanceof RegExp
+-  }
+-
+-  isError() {
+-    return this._value instanceof Error
+-  }
+-
+-  isPromise() {
+-    return (
+-      this._value !== null &&
+-      typeof this._value === 'object' &&
+-      typeof this._value.then === 'function'
+-    )
+-  }
+-
+-  isProxy() {
+-    // Detecting a Proxy from JS is impossible without the native runtime.
+-    return false
+-  }
+-
+-  isGenerator() {
+-    return (
+-      this._value !== null &&
+-      typeof this._value === 'object' &&
+-      typeof this._value.next === 'function' &&
+-      typeof this._value.return === 'function' &&
+-      typeof this._value.throw === 'function'
+-    )
+-  }
+-
+-  isMap() {
+-    return this._value instanceof Map
+-  }
+-
+-  isSet() {
+-    return this._value instanceof Set
+-  }
+-
+-  isWeakMap() {
+-    return this._value instanceof WeakMap
+-  }
+-
+-  isWeakSet() {
+-    return this._value instanceof WeakSet
+-  }
+-
+-  isWeakRef() {
+-    return typeof WeakRef !== 'undefined' && this._value instanceof WeakRef
+-  }
+-
+-  isArrayBuffer() {
+-    return this._value instanceof ArrayBuffer
+-  }
+-
+-  isSharedArrayBuffer() {
+-    return (
+-      typeof SharedArrayBuffer !== 'undefined' &&
+-      this._value instanceof SharedArrayBuffer
+-    )
+-  }
+-
+-  isTypedArray() {
+-    return ArrayBuffer.isView(this._value) && !(this._value instanceof DataView)
+-  }
+-
+-  isInt8Array() {
+-    return this._value instanceof Int8Array
+-  }
+-
+-  isUint8Array() {
+-    return this._value instanceof Uint8Array && !(this._value instanceof Uint8ClampedArray)
+-  }
+-
+-  isUint8ClampedArray() {
+-    return this._value instanceof Uint8ClampedArray
+-  }
+-
+-  isInt16Array() {
+-    return this._value instanceof Int16Array
+-  }
+-
+-  isUint16Array() {
+-    return this._value instanceof Uint16Array
+-  }
+-
+-  isInt32Array() {
+-    return this._value instanceof Int32Array
+-  }
+-
+-  isUint32Array() {
+-    return this._value instanceof Uint32Array
+-  }
+-
+-  isFloat16Array() {
+-    return typeof Float16Array !== 'undefined' && this._value instanceof Float16Array
+-  }
+-
+-  isFloat32Array() {
+-    return this._value instanceof Float32Array
+-  }
+-
+-  isFloat64Array() {
+-    return this._value instanceof Float64Array
+-  }
+-
+-  isBigInt64Array() {
+-    return typeof BigInt64Array !== 'undefined' && this._value instanceof BigInt64Array
+-  }
+-
+-  isBigUint64Array() {
+-    return typeof BigUint64Array !== 'undefined' && this._value instanceof BigUint64Array
+-  }
+-
+-  isDataView() {
+-    return this._value instanceof DataView
+-  }
+-
+-  isModuleNamespace() {
+-    return false
+-  }
+-
+-  isFunction() {
+-    return this._typeof === 'function'
+-  }
+-
+-  isAsyncFunction() {
+-    return (
+-      this._typeof === 'function' &&
+-      this._value.constructor &&
+-      this._value.constructor.name === 'AsyncFunction'
+-    )
+-  }
+-
+-  isGeneratorFunction() {
+-    return (
+-      this._typeof === 'function' &&
+-      this._value.constructor &&
+-      this._value.constructor.name === 'GeneratorFunction'
+-    )
+-  }
+-
+-  isExternal() {
+-    return false
+-  }
+-
+-  isBigInt() {
+-    return this._typeof === 'bigint'
+-  }
+-}
+-
+-module.exports = exports = function type(value) {
+-  return new Type(value)
+-}
+-
+-// Object tagging — bare-type uses these to associate opaque tags with
+-// objects, e.g. for cross-realm equality. The JS shim uses a WeakMap so
+-// tags survive as long as the object is alive but don't pin GC.
+-const tags = new WeakMap()
+-
+-exports.createTag = function createTag(...components) {
+-  const tag = new Uint32Array(4)
+-  for (let i = 0; i < 4; i++) tag[i] = components[i] || 0
+-  return tag
+-}
+-
+-exports.addTag = function addTag(object, tag) {
+-  let list = tags.get(object)
+-  if (!list) {
+-    list = []
+-    tags.set(object, list)
+-  }
+-  list.push(tag)
+-}
+-
+-exports.checkTag = function checkTag(object, tag) {
+-  const list = tags.get(object)
+-  if (!list) return false
+-  return list.some(
+-    (t) => t.length === tag.length && t.every((v, i) => v === tag[i])
+-  )
+-}
+diff --git a/shims/bare-type-jsshim/package.json b/shims/bare-type-jsshim/package.json
+deleted file mode 100644
+index 13033c1..0000000
+--- a/shims/bare-type-jsshim/package.json
++++ /dev/null
+@@ -1,7 +0,0 @@
+-{
+-  "name": "bare-type-jsshim",
+-  "version": "1.0.0",
+-  "description": "Pure-JS replacement for bare-type, used by bare-pack via pack.imports.json so the worklet bundle doesn't need libbare-type.so at runtime.",
+-  "main": "./index.js",
+-  "license": "Apache-2.0"
+-}
 diff --git a/spec/hrpc/hrpc.json b/spec/hrpc/hrpc.json
 index 23079ea..e92d2f5 100644
 --- a/spec/hrpc/hrpc.json
@@ -1985,10 +2648,17 @@ index ab55aea..7cc3e19 100644
          this._account_abstraction_wallets.tron = new WalletManagerTronGasfree(seed, config.tron)
        }
 diff --git a/src/wdk-worklet.js b/src/wdk-worklet.js
-index 630ec9d..6c97f56 100644
+index 630ec9d..5347a02 100644
 --- a/src/wdk-worklet.js
 +++ b/src/wdk-worklet.js
-@@ -11,16 +11,23 @@ const rpc = new HRPC(IPC)
+@@ -1,5 +1,4 @@
+-// eslint-disable-next-line no-undef
+-const { IPC } = BareKit
++const { IPC } = globalThis.BareKit ?? globalThis.Bare
+ const HRPC = require('../spec/hrpc')
+
+ const { WdkManager } = require('../src/wdk-core/wdk-manager')
+@@ -11,16 +10,29 @@ const rpc = new HRPC(IPC)
   * @type {WdkManager}
   */
  let wdk = null
@@ -2001,10 +2671,16 @@ index 630ec9d..6c97f56 100644
 +  return next
 +}
 +
++async function disposeCurrent () {
++  const current = wdk
++  wdk = null
++  await current?.dispose()
++}
++
 +rpc.onWorkletStart(init => transition(async () => {
    try {
 -    if (wdk) wdk.dispose() // cleanup existing;
-+    if (wdk) await wdk.dispose()
++    await disposeCurrent()
      wdk = new WdkManager(init.seedPhrase, JSON.parse(init.config))
      return { status: 'started' }
    } catch (error) {
@@ -2015,19 +2691,17 @@ index 630ec9d..6c97f56 100644
 
  rpc.onGetAddress(async payload => {
    try {
-@@ -148,11 +155,103 @@ rpc.onGetApproveTransaction(async payload => {
+@@ -148,11 +160,101 @@ rpc.onGetApproveTransaction(async payload => {
    }
  })
 
 -rpc.onDispose(() => {
 +rpc.onDispose(() => transition(async () => {
-   try {
--    wdk.dispose()
-+    if (wdk) await wdk.dispose()
-     wdk = null
-   } catch (error) {
-     throw new Error(rpcException.stringifyError(error))
-   }
++  try {
++    await disposeCurrent()
++  } catch (error) {
++    console.error(rpcException.stringifyError(error))
++  }
 +}))
 +
 +/*****************
@@ -2040,8 +2714,7 @@ index 630ec9d..6c97f56 100644
 +
 +rpc.onWorkletStop(() => transition(async () => {
 +  try {
-+    if (wdk) await wdk.dispose()
-+    wdk = null
++    await disposeCurrent()
 +    return { status: 'stopped' }
 +  } catch (error) {
 +    throw new Error(rpcException.stringifyError(error))
@@ -2068,7 +2741,7 @@ index 630ec9d..6c97f56 100644
 +  } catch (error) {
 +    throw new Error(rpcException.stringifyError(error))
 +  }
- })
++})
 +
 +rpc.onArkadeGetPendingLightningReceives(async payload => {
 +  try {
@@ -2089,13 +2762,15 @@ index 630ec9d..6c97f56 100644
 +})
 +
 +rpc.onArkadeGetSwapHistory(async payload => {
-+  try {
+   try {
+-    wdk.dispose()
+-    wdk = null
 +    const swaps = await wdk.arkadeGetSwapHistory(payload.accountIndex)
 +    return { swaps: JSON.stringify(swaps, stringifyAmount) }
-+  } catch (error) {
-+    throw new Error(rpcException.stringifyError(error))
-+  }
-+})
+   } catch (error) {
+     throw new Error(rpcException.stringifyError(error))
+   }
+ })
 +
 +rpc.onArkadeGetSwapMarkets(async payload => {
 +  try {
@@ -2123,10 +2798,10 @@ index 630ec9d..6c97f56 100644
 +}
 diff --git a/test/hrpc-compat.test.cjs b/test/hrpc-compat.test.cjs
 new file mode 100644
-index 0000000..5d692d6
+index 0000000..ce7e553
 --- /dev/null
 +++ b/test/hrpc-compat.test.cjs
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,235 @@
 +const { test } = require('node:test')
 +const assert = require('node:assert/strict')
 +const fs = require('node:fs')
@@ -2304,18 +2979,60 @@ index 0000000..5d692d6
 +  }
 +})
 +
-+function workletClient (Manager) {
++test('a rejected teardown does not retain a terminal manager', { timeout: 5000 }, async () => {
++  for (const command of ['workletStop', 'dispose', 'workletStart']) {
++    const instances = []
++    class Manager {
++      constructor () { instances.push(this) }
++      async dispose () { if (this.fail) throw new Error('teardown failed') }
++    }
++    const { client, close, errors } = workletClient(Manager)
++    const start = () => client.workletStart({ seedPhrase: 'seed', config: '{}' })
++    try {
++      await start()
++      instances[0].fail = true
++      if (command === 'dispose') client.dispose({})
++      else await assert.rejects(command === 'workletStart' ? start() : client[command]({}), /teardown failed/)
++      assert.equal((await start()).status, 'started', command)
++      if (command === 'dispose') assert.match(errors[0], /teardown failed/)
++      assert.equal(instances.length, 2)
++      await client.workletStop({})
++    } finally {
++      close()
++    }
++  }
++})
++
++test('starts and stops over modern Bare IPC', { timeout: 5000 }, async () => {
++  let disposed = false
++  class Manager {
++    async dispose () { disposed = true }
++  }
++  const { client, close } = workletClient(Manager, 'Bare')
++  try {
++    assert.equal((await client.workletStart({ seedPhrase: 'seed', config: '{}' })).status, 'started')
++    assert.equal((await client.workletStop({})).status, 'stopped')
++    assert.equal(disposed, true)
++  } finally {
++    close()
++  }
++})
++
++function workletClient (Manager, runtime = 'BareKit') {
 +  const vm = require('node:vm')
 +  const { createRequire } = require('node:module')
 +  const file = path.join(__dirname, '../src/wdk-worklet.js')
 +  const nativeRequire = createRequire(file)
++  const errors = []
 +  const clientStream = new Duplex({ read () {}, write (chunk, _encoding, callback) { serverStream.push(chunk); callback() } })
 +  const serverStream = new Duplex({ read () {}, write (chunk, _encoding, callback) { clientStream.push(chunk); callback() } })
 +  vm.runInNewContext(fs.readFileSync(file, 'utf8'), {
-+    BareKit: { IPC: serverStream },
++    [runtime]: { IPC: serverStream },
++    console: { error: error => errors.push(error) },
 +    require: name => name.endsWith('/wdk-manager') ? { WdkManager: Manager } : nativeRequire(name)
 +  }, { filename: file })
 +  return {
++    errors,
 +    client: new HRPC(clientStream),
 +    close () { clientStream.destroy(); serverStream.destroy() }
 +  }
