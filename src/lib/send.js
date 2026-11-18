@@ -1,276 +1,225 @@
-/**
- * Transaction sending utilities with automatic routing based on destination type
- */
+import {
+  BIP21,
+  PaymentRouter,
+  arkRail,
+  arkAssetRail,
+  onchainRail,
+  createDefaultPaymentRouter,
+  arkTarget,
+  isLnurl,
+  walletFeeSource,
+  selectVirtualCoins,
+  resolveSendAmount,
+  Estimator,
+  toOffchainInputFeeParams,
+  DustChangeError,
+} from '@arkade-os/sdk';
+import { lightningRail } from '@arkade-os/swap';
+import { createLnurlClient } from '@arkade-os/lnurl-client';
+import { MaximumFeeExceededError } from '@tetherto/wdk-wallet';
+import { throwIfAborted, withAbort } from './abort.js';
+import {
+  arkadePaymentRouter,
+  DEFAULT_RAIL_PRIORITY,
+  lnurlRails,
+} from '@arkade-os/lnurl-client/arkade';
 
-import { isArkAddress, isBTCAddress, isLightningInvoice } from './address.js';
-import { isBip21, decodeBip21 } from './bip21.js';
-import { decodeInvoice } from './bolt11.js';
-import { calculateOffchainFee, calculateOnchainFee, calculateLightningFee } from './fees.js';
-import { isLightningAddress, isLnUrl, fetchInvoice, fetchArkAddress } from './lnurl.js';
-
-/** @enum {string} */
-export const TransactionType = /** @type {const} */ ({
-  ARK_OFFCHAIN: 'ark_offchain',
-  BITCOIN_ONCHAIN: 'bitcoin_onchain',
-  LIGHTNING: 'lightning',
-  EMAIL: 'email',
-  UNKNOWN: 'unknown',
-});
-
-/**
- * @typedef {{ txid: string; type: string; fee: bigint }} SendResult
- */
-
-/**
- * @typedef {{
- *   to: string;
- *   amount: bigint;
- *   wallet: import('@arkade-os/sdk').IWallet;
- *   arkInfo: Promise<import('@arkade-os/sdk').ArkInfo>;
- *   lightning?: import('@arkade-os/boltz-swap').ArkadeSwaps | null;
- * }} SendOptions
- */
-
-/**
- * Like {@link SendOptions} but only requires read access — quoting a fee
- * never signs, so a read-only wallet is sufficient.
- * @typedef {Omit<SendOptions, 'wallet'> & {
- *   wallet: import('@arkade-os/sdk').IReadonlyWallet;
- * }} QuoteOptions
- */
-
-/**
- * Resolve a possibly-BIP21 destination string into the inner address/invoice
- * actually consumed by the wallet, plus any amount carried in the URI.
- *
- * BIP21 wraps a Bitcoin address with optional `?ark=`, `?lightning=`, and
- * `?amount=` parameters. Explicit `?ark=` parameters take priority over LNURL
- * fallback routes.
- *
- * @param {string} destination
- * @returns {{ resolved: string; bip21Sats?: number }}
- */
-export function resolveDestination(destination) {
-  if (!isBip21(destination)) {
-    return { resolved: destination };
-  }
-  const decoded = decodeBip21(destination);
-  const resolved = decoded.invoice ?? decoded.arkAddress ?? decoded.lnurl ?? decoded.address;
-  if (!resolved) {
-    throw new Error(`BIP21 URI has no usable destination: ${destination}`);
-  }
-  return { resolved, bip21Sats: decoded.satoshis };
+/** @param {import('@arkade-os/sdk').IWallet} wallet */
+export function withZeroChangeFee(wallet) {
+  return new Proxy(wallet, {
+    get(target, property) {
+      if (property === 'send') {
+        /** @param {Parameters<import('@arkade-os/sdk').IWallet['send']>} args */
+        return (...args) => {
+          const first = args[0];
+          const params =
+            args.length === 1 && 'recipients' in first
+              ? first
+              : {
+                  recipients:
+                    /** @type {[import('@arkade-os/sdk').Recipient, ...import('@arkade-os/sdk').Recipient[]]} */ (
+                      args
+                    ),
+                };
+          return target.send({ ...params, maxChangeFee: 0 });
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 /**
- * Detect the transaction type based on the destination.
- * Accepts BIP21 URIs and resolves them to the inner destination type.
- * @param {string} destination
- * @returns {string}
+ * @param {import('@arkade-os/sdk').IWallet} wallet
+ * @param {{ solver?: import('@arkade-os/swap').SwapRailClient | null; client?: import('@arkade-os/lnurl-client').LnurlClient }} [options]
+ * @returns {import('@arkade-os/lnurl-client/arkade').LnurlPaymentRouter}
  */
-export function detectTransactionType(destination) {
-  const { resolved } = isBip21(destination)
-    ? resolveDestination(destination)
-    : { resolved: destination };
-
-  if (isArkAddress(resolved)) {
-    return TransactionType.ARK_OFFCHAIN;
-  }
-  if (isBTCAddress(resolved)) {
-    return TransactionType.BITCOIN_ONCHAIN;
-  }
-  if (isLightningInvoice(resolved)) {
-    return TransactionType.LIGHTNING;
-  }
-  if (isLightningAddress(resolved) || isLnUrl(resolved)) {
-    return TransactionType.EMAIL;
-  }
-  return TransactionType.UNKNOWN;
+export function createPaymentRouter(wallet, { solver = null, client } = {}) {
+  const guarded = withZeroChangeFee(wallet);
+  const concrete = /** @type {import('@arkade-os/sdk').Wallet} */ (guarded);
+  const router = createDefaultPaymentRouter(concrete).use(
+    cappedOnchainRail(walletFeeSource(concrete))
+  );
+  const rail = solver ? lightningRail(solver) : undefined;
+  return arkadePaymentRouter({ wallet: guarded, router, lightning: rail, client });
 }
 
 /**
- * Reconcile an explicit `options.amount` with an amount carried in a BIP21 URI.
- * - If only one is set, use that one.
- * - If both are set and they agree, use either.
- * - If both are set and they disagree, throw.
- * @param {bigint} optionsAmount
- * @param {number | undefined} bip21Sats
- * @returns {bigint}
+ * @param {import('@arkade-os/sdk').IReadonlyWallet} wallet
+ * @param {Promise<import('@arkade-os/sdk').OperatorInfo>} arkInfo
+ * @returns {import('@arkade-os/lnurl-client/arkade').LnurlPaymentRouter}
  */
-function reconcileAmount(optionsAmount, bip21Sats) {
-  if (bip21Sats === undefined) return optionsAmount;
-  const bip21Amount = BigInt(bip21Sats);
-  if (optionsAmount === 0n) return bip21Amount;
-  if (optionsAmount !== bip21Amount) {
-    throw new Error(
-      `Amount mismatch: options.amount=${optionsAmount} but BIP21 URI specifies ${bip21Amount}`
+export function createReadOnlyPaymentRouter(wallet, arkInfo) {
+  // Core quotes only read the wallet; this bridge supplies no signing capability.
+  const router = new PaymentRouter({
+    wallet: /** @type {import('@arkade-os/sdk').IWallet} */ (wallet),
+    prefs: { priority: ['ark', 'ark-asset', 'onchain', 'lnurl-arkade'] },
+  })
+    .use(arkRail())
+    .use(arkAssetRail())
+    .use(cappedOnchainRail(async () => (await arkInfo).fees));
+  for (const rail of lnurlRails({ client: createLnurlClient(), arkade: arkRail() })) {
+    router.use(rail);
+  }
+  return router;
+}
+
+/** @param {number | bigint} amount */
+function safeOnchainSats(amount) {
+  const sats = Number(amount);
+  if (!Number.isSafeInteger(sats)) {
+    throw new RangeError('Onchain payment exceeds the safe integer satoshi range');
+  }
+  return sats;
+}
+
+/** @param {() => Promise<import('@arkade-os/sdk').FeeInfo>} feeInfo
+ * @returns {import('@arkade-os/sdk').PaymentRail} */
+function cappedOnchainRail(feeInfo) {
+  const rail = onchainRail({ feeInfo });
+  return {
+    ...rail,
+    async quote(req, ctx) {
+      const capped =
+        /** @type {import('@arkade-os/sdk').PaymentRequest & { maxFee?: number | bigint }} */ (req);
+      if (capped.maxFee === undefined || req.selectedVtxos) return rail.quote(req, ctx);
+      const fees = await feeInfo();
+      const estimator = new Estimator(fees.intentFee ?? {});
+      const candidates = (
+        await ctx.wallet.getSpendableVtxos({
+          withRecoverable: true,
+          withUnrolled: false,
+          genericallySpendableOnly: true,
+        })
+      ).filter(
+        (coin) =>
+          !coin.assets?.length &&
+          estimator.evalOffchainInput(toOffchainInputFeeParams(coin)).satoshis < coin.value
+      );
+      const fixedRail = onchainRail({ feeInfo: async () => fees });
+      const dust = BigInt(
+        /** @type {import('@arkade-os/sdk').Wallet} */ (ctx.wallet).dustAmount ?? 330
+      );
+      let target = BigInt(resolveSendAmount(rail.id, req.raw, req.amount));
+      for (;;) {
+        const selectedVtxos =
+          /** @type {import('@arkade-os/sdk').NormalizedExtendedVirtualCoin[]} */ (
+            selectVirtualCoins(candidates, safeOnchainSats(target)).inputs
+          );
+        const available = selectedVtxos.reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+        safeOnchainSats(available);
+        const quote = await fixedRail.quote({ ...req, selectedVtxos }, ctx);
+        const total = BigInt(safeOnchainSats(quote.total));
+        const change = available - total;
+        if (change === 0n || change >= dust) return quote;
+        if (selectedVtxos.length === candidates.length) {
+          if (change < 0n) {
+            throw new Error('Insufficient funds to cover the onchain payment and fees');
+          }
+          throw new DustChangeError(change, dust);
+        }
+        target = change > 0n ? available + 1n : total;
+      }
+    },
+  };
+}
+
+/**
+ * @typedef {{ router: import('@arkade-os/lnurl-client/arkade').LnurlPaymentRouter;
+ *   to: string; amount: bigint; assets?: import('@arkade-os/sdk').Asset[]; maxFee?: number | bigint;
+ *   signal?: AbortSignal; paymentTimeoutMs?: number;
+ *   trackCompletion?: (completion: Promise<import('@arkade-os/sdk').RouteResult>) => void }} SendOptions
+ */
+
+/** @param {SendOptions} options */
+function paymentRequest({ to, amount, assets, maxFee }) {
+  if (amount < 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Amount must be a non-negative safe integer number of satoshis');
+  }
+  const uriAmount = BIP21.amountSats(to);
+  if (uriAmount !== undefined && amount > 0n && BigInt(uriAmount) !== amount) {
+    throw new Error('Amount mismatch with BIP21 URI');
+  }
+  if (assets?.length && !arkTarget(to)) {
+    throw new Error('Asset transfers require an Arkade address');
+  }
+  let raw = to;
+  if (to.toLowerCase().startsWith('bitcoin:') && !arkTarget(to)) {
+    const target = BIP21.parse(to).params.lightning;
+    if (typeof target === 'string' && isLnurl(target)) raw = target;
+  }
+  const sats = amount > 0n ? Number(amount) : uriAmount;
+  return {
+    raw,
+    ...(sats !== undefined ? { amount: sats } : {}),
+    ...(assets ? { assets } : {}),
+    ...(maxFee !== undefined ? { maxFee } : {}),
+  };
+}
+
+/** @param {SendOptions} options */
+async function routePayment(options) {
+  const request = paymentRequest(options);
+  const quote = await options.router.route(request, { priority: DEFAULT_RAIL_PRIORITY });
+  if (request.amount !== undefined && quote.amount !== request.amount) {
+    throw new Error('Amount mismatch with payment quote');
+  }
+  return quote;
+}
+
+/** @param {SendOptions} options */
+export async function quoteSend(options) {
+  const quote = await routePayment(options);
+  return { fee: BigInt(quote.fee), total: BigInt(quote.total) };
+}
+
+/** @param {SendOptions} options */
+export async function send(options) {
+  throwIfAborted(options.signal);
+  const timeoutMs = options.paymentTimeoutMs ?? 120_000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1) {
+    throw new RangeError('Payment timeout must be a positive integer of at most 2147483647 ms');
+  }
+  const quote = await withAbort(routePayment(options), options.signal);
+  throwIfAborted(options.signal);
+  const fee = BigInt(quote.fee);
+  if (options.maxFee !== undefined && fee > BigInt(options.maxFee)) {
+    throw new MaximumFeeExceededError('Payment fee exceeds the configured maximum.', {});
+  }
+  const handle = await quote.send();
+  let result;
+  try {
+    options.trackCompletion?.(handle.settled());
+    result = await handle.settled({ timeoutMs });
+  } catch (error) {
+    throw Object.assign(
+      error instanceof Error ? error : new Error('Payment settlement failed', { cause: error }),
+      {
+        paymentId: handle.id,
+        railId: quote.railId,
+      }
     );
   }
-  return optionsAmount;
-}
-
-/**
- * @param {string} destination
- * @returns {Promise<string | null>}
- */
-async function fetchArkAddressIfAvailable(destination) {
-  try {
-    const response = await fetchArkAddress(destination);
-    return response.address && isArkAddress(response.address) ? response.address : null;
-  } catch {
-    return null;
-  }
-}
-
-/** @param {bigint} amount */
-function assertPositiveAmount(amount) {
-  if (amount <= 0n) {
-    throw new Error('Amount required for LNURL payment');
-  }
-}
-
-/**
- * Quote a transaction fee without sending
- * @param {QuoteOptions} options
- * @returns {Promise<import('./fees.js').FeeEstimate>}
- */
-export async function quoteSend(options) {
-  const { to, amount, arkInfo, lightning } = options;
-  const { resolved, bip21Sats } = resolveDestination(to);
-  const type = detectTransactionType(resolved);
-  const effectiveAmount = reconcileAmount(amount, bip21Sats);
-
-  switch (type) {
-    case TransactionType.ARK_OFFCHAIN: {
-      return calculateOffchainFee(arkInfo);
-    }
-
-    case TransactionType.BITCOIN_ONCHAIN: {
-      return calculateOnchainFee(arkInfo);
-    }
-
-    case TransactionType.LIGHTNING: {
-      if (!lightning) {
-        throw new Error('Lightning support not configured');
-      }
-      const invoice = decodeInvoice(resolved);
-      const invoiceAmount = BigInt(invoice.amountSats);
-
-      if (effectiveAmount > 0n && effectiveAmount !== invoiceAmount) {
-        throw new Error('Amount mismatch with Lightning invoice');
-      }
-
-      return calculateLightningFee(invoiceAmount, lightning);
-    }
-
-    case TransactionType.EMAIL: {
-      if (!lightning) {
-        throw new Error('Lightning support not configured');
-      }
-      assertPositiveAmount(effectiveAmount);
-
-      const arkAddress = await fetchArkAddressIfAvailable(resolved);
-      if (arkAddress) {
-        return calculateOffchainFee(arkInfo);
-      }
-
-      return calculateLightningFee(effectiveAmount, lightning);
-    }
-
-    default: {
-      throw new Error(`Unknown destination type: ${to}`);
-    }
-  }
-}
-
-/**
- * Send a transaction to the specified destination.
- * Automatically routes to the appropriate method based on address type.
- * Accepts BIP21 URIs and resolves them to their inner destination.
- * @param {SendOptions} options
- * @returns {Promise<SendResult>}
- */
-export async function send(options) {
-  const { to, amount, wallet, arkInfo, lightning } = options;
-  const { resolved, bip21Sats } = resolveDestination(to);
-  const type = detectTransactionType(resolved);
-  const effectiveAmount = reconcileAmount(amount, bip21Sats);
-
-  switch (type) {
-    case TransactionType.ARK_OFFCHAIN: {
-      const txid = await wallet.sendBitcoin({
-        address: resolved,
-        amount: Number(effectiveAmount),
-      });
-      const feeEstimate = await calculateOffchainFee(arkInfo);
-      return { txid, type: TransactionType.ARK_OFFCHAIN, fee: feeEstimate.fee };
-    }
-
-    case TransactionType.BITCOIN_ONCHAIN: {
-      const txid = await wallet.sendBitcoin({
-        address: resolved,
-        amount: Number(effectiveAmount),
-      });
-      const feeEstimate = await calculateOnchainFee(arkInfo);
-      return { txid, type: TransactionType.BITCOIN_ONCHAIN, fee: feeEstimate.fee };
-    }
-
-    case TransactionType.LIGHTNING: {
-      if (!lightning) {
-        throw new Error('Lightning support not configured');
-      }
-
-      const invoice = decodeInvoice(resolved);
-      const invoiceAmount = BigInt(invoice.amountSats);
-
-      if (effectiveAmount > 0n && effectiveAmount !== invoiceAmount) {
-        throw new Error('Amount mismatch with Lightning invoice');
-      }
-
-      const result = await lightning.sendLightningPayment({ invoice: resolved });
-      const feeEstimate = await calculateLightningFee(invoiceAmount, lightning);
-      return {
-        txid: result.preimage || invoice.paymentHash,
-        type: TransactionType.LIGHTNING,
-        fee: feeEstimate.fee,
-      };
-    }
-
-    case TransactionType.EMAIL: {
-      if (!lightning) {
-        throw new Error('Lightning support not configured');
-      }
-      assertPositiveAmount(effectiveAmount);
-
-      const arkAddress = await fetchArkAddressIfAvailable(resolved);
-      if (arkAddress) {
-        const txid = await wallet.sendBitcoin({
-          address: arkAddress,
-          amount: Number(effectiveAmount),
-        });
-        const feeEstimate = await calculateOffchainFee(arkInfo);
-        return { txid, type: TransactionType.ARK_OFFCHAIN, fee: feeEstimate.fee };
-      }
-
-      const invoice = await fetchInvoice(resolved, Number(effectiveAmount));
-      const decoded = decodeInvoice(invoice);
-      const invoiceAmount = BigInt(decoded.amountSats);
-
-      if (invoiceAmount !== effectiveAmount) {
-        throw new Error('Amount mismatch with LNURL invoice');
-      }
-
-      const result = await lightning.sendLightningPayment({ invoice });
-      const feeEstimate = await calculateLightningFee(invoiceAmount, lightning);
-      return {
-        txid: result.preimage || decoded.paymentHash,
-        type: TransactionType.LIGHTNING,
-        fee: feeEstimate.fee,
-      };
-    }
-
-    default: {
-      throw new Error(`Unknown destination type: ${to}`);
-    }
-  }
+  return { txid: result.txid ?? result.preimage ?? result.swapId ?? handle.id, fee };
 }

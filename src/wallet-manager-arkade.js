@@ -1,6 +1,7 @@
 import WalletManager from '@tetherto/wdk-wallet';
 import {
-  RestArkProvider,
+  RestOperatorProvider,
+  RestIndexerProvider,
   SingleKey,
   Wallet,
   InMemoryWalletRepository,
@@ -8,272 +9,207 @@ import {
   maybeArkError,
 } from '@arkade-os/sdk';
 import { HDKey } from '@scure/bip32';
-import { ArkadeSwaps, BoltzSwapProvider } from '@arkade-os/boltz-swap';
+import { createSwapClient } from '@arkade-os/swap';
 import { sodium_memzero } from 'sodium-universal';
-import { parseFeeRate } from './lib/fees.js';
 import { WalletAccountArkade } from './wallet-account-arkade.js';
+import { withZeroChangeFee } from './lib/send.js';
 
-const WALLET_CREATE_TIMEOUT_MS = 30_000;
+/** @typedef {import('./types.js').ArkadeWalletConfig} ArkadeWalletConfig */
 
-// arkd's structured error name when the client's X-Build-Version is below the
-// operator's configured minimum. The new ts-sdk (signer-rotation support) sends
-// an X-Build-Version header and the operator's version guard rejects clients
-// that are too old to understand rotation — it fails even getInfo, so without
-// this the wallet would just see a generic network failure and retry uselessly.
-const BUILD_VERSION_TOO_OLD = 'BUILD_VERSION_TOO_OLD';
-
-/**
- * Bitcoin wallet manager using the Arkade SDK.
- * Caches accounts in the inherited `_accounts` map and delegates disposal to the base class.
- */
 class WalletManagerArkade extends WalletManager {
-  /**
-   * @param {string | Uint8Array} seed
-   * @param {import('./types.js').ArkadeWalletConfig} [config]
-   */
+  /** @param {string | Uint8Array} seed @param {ArkadeWalletConfig} [config] */
   constructor(seed, config = {}) {
     super(seed, config);
-
-    /** @private @type {import('@arkade-os/sdk').ArkProvider} */
-    this._arkProvider = /** @type {import('@arkade-os/sdk').ArkProvider} */ (
-      this._cfg().arkProvider ?? new RestArkProvider(this._cfg().arkServerUrl)
-    );
-
-    /** @private @type {Promise<import('@arkade-os/sdk').ArkInfo>} */
-    // Retry once on failure. The previous code re-threw from the catch handler
-    // which orphaned the original rejected promise as unhandled — Bare's
-    // uncaught-rejection handler would then call abort() and crash the app.
-    // Returning the retry result from catch keeps a single promise chain with
-    // no orphaned rejections. If BOTH attempts fail, the promise rejects and
-    // callers (getAccount, getFeeRates) surface the error normally.
-    this._info = this._arkProvider.getInfo().catch((/** @type {unknown} */ reason) => {
-      // A too-old client is rejected deterministically with a structured
-      // BUILD_VERSION_TOO_OLD ArkError (even on getInfo). Retrying can't fix it,
-      // so skip the retry and surface an actionable "update the SDK" error
-      // instead of an opaque network failure. Other failures fall through to
-      // the single transient-error retry below.
-      const arkErr = maybeArkError(reason);
-      if (arkErr?.name === BUILD_VERSION_TOO_OLD) {
-        const minVersion = arkErr.metadata?.min_version ?? arkErr.metadata?.minVersion;
-        throw new Error(
-          `Arkade operator at ${this._cfg().arkServerUrl} requires a newer client build` +
-            `${minVersion ? ` (minimum ${minVersion})` : ''}. ` +
-            'Update @arkade-os/sdk to a version compatible with this operator.'
-        );
-      }
-      console.warn(`Arkade network info fetch failed, retrying: ${String(reason)}`);
-      return this._arkProvider.getInfo();
-    });
-
+    const url =
+      config.arkServerUrl ??
+      (config.service && 'operatorUrl' in config.service ? config.service.operatorUrl : undefined);
     /** @private */
-    this._disposed = false;
-
-    /** @private @type {{ [path: string]: Promise<{ wallet: Wallet; keyPair: import('@tetherto/wdk-wallet').KeyPair; swaps: ArkadeSwaps | null }> | undefined }} */
-    this._walletPromises = {};
-  }
-
-  /**
-   * Narrows the inherited `_config` (typed as the WDK `WalletConfig` base)
-   * to our `ArkadeWalletConfig`. Accessing it through this helper keeps the
-   * type assertion in one place.
-   * @private
-   * @returns {import('./types.js').ArkadeWalletConfig}
-   */
-  _cfg() {
-    return /** @type {import('./types.js').ArkadeWalletConfig} */ (this._config);
+    this._arkProvider =
+      config.operatorProvider ?? config.arkProvider ?? new RestOperatorProvider(url);
+    /** @private */
+    this._info = this._arkProvider
+      .getInfo()
+      .catch((error) => {
+        const arkError = maybeArkError(error);
+        if (arkError?.name === 'BUILD_VERSION_TOO_OLD') {
+          const minimum = arkError.metadata?.min_version ?? arkError.metadata?.minVersion;
+          throw new Error(
+            `Arkade operator requires a newer client build${minimum ? ` (minimum ${minimum})` : ''}. Update @arkade-os/sdk.`,
+            { cause: error }
+          );
+        }
+        return this._arkProvider.getInfo();
+      })
+      .then((info) => {
+        if (
+          config.service &&
+          'network' in config.service &&
+          info.network !== config.service.network
+        ) {
+          throw new Error(`Arkade service network mismatch: ${info.network}`);
+        }
+        return info;
+      });
+    void this._info.catch(() => {});
+    /** @private */
+    this._url = url;
+    /** @private @type {Map<string, Promise<WalletAccountArkade>>} */
+    this._accountPromises = new Map();
+    /** @private @type {Promise<void> | undefined} */
+    this._disposePromise = undefined;
   }
 
   /** @private */
   _disposeCheck() {
-    if (this._disposed) {
+    if (this.disposed || this._disposePromise)
       throw new Error('WalletManagerArkade has been disposed');
-    }
   }
 
-  /**
-   * @private
-   * @param {string} path — full BIP-86 derivation path (e.g. `m/86'/1/0'/0/3`)
-   * @returns {Promise<{ wallet: Wallet; keyPair: import('@tetherto/wdk-wallet').KeyPair; swaps: ArkadeSwaps | null }>}
-   */
-  _getOrCreateWalletForPath(path) {
-    if (this._walletPromises[path]) {
-      return this._walletPromises[path];
-    }
-
-    this._walletPromises[path] = (async () => {
-      // Keep the master HDKey named so we can wipe its private data after
-      // derivation. The final hdKey._privateKey is shared with keyPair below
-      // and is zeroed via sodium_memzero in the account dispose path.
-      // The try/finally ensures the master's private data is wiped even if
-      // `derive(path)` throws on a malformed path supplied by the consumer.
-      const master = HDKey.fromMasterSeed(this.seed);
-      let hdKey;
-      try {
-        hdKey = master.derive(path);
-      } finally {
-        master.wipePrivateData();
-      }
-      if (!hdKey.privateKey || !hdKey.publicKey) {
-        throw new Error(`Failed to derive private key at path ${path}`);
-      }
-
-      const cfg = this._cfg();
-      /** @type {import('@arkade-os/sdk').WalletConfig} */
-      const walletConfig = {
-        ...cfg,
-        identity: SingleKey.fromPrivateKey(hdKey.privateKey),
-        // Use in-memory storage when no storage config is provided. The SDK
-        // defaults to IndexedDB which isn't available in the Bare worklet
-        // runtime. In-memory storage means VTXO state is lost on app restart,
-        // but balance/send/history work for the current session. A future
-        // improvement could bridge to expo-sqlite on the RN side or use a
-        // bare-fs-backed SQLite repo.
-        storage: cfg.storage ?? {
-          walletRepository: new InMemoryWalletRepository(),
-          contractRepository: new InMemoryContractRepository(),
-        },
-      };
-
-      // Track the timer so we can clear it when Wallet.create wins. Letting
-      // the timeout fire after a successful create produces an unhandled
-      // rejection on the losing promise, which Bare's strict handler turns
-      // into an abort.
-      /** @type {ReturnType<typeof setTimeout> | undefined} */
-      let timeoutId;
-      const wallet = await Promise.race([
-        Wallet.create(walletConfig),
-        new Promise((_resolve, reject) => {
-          timeoutId = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Arkade wallet creation timed out after ${WALLET_CREATE_TIMEOUT_MS}ms — ` +
-                    `is the Arkade operator at ${cfg.arkServerUrl} reachable?`
-                )
-              ),
-            WALLET_CREATE_TIMEOUT_MS
-          );
-        }),
-      ]).finally(() => clearTimeout(timeoutId));
-
-      /** @type {import('@tetherto/wdk-wallet').KeyPair} */
-      const keyPair = {
-        privateKey: hdKey.privateKey,
-        publicKey: hdKey.publicKey,
-      };
-
-      /** @type {ArkadeSwaps | null} */
-      let swaps = null;
-      if (cfg.swapProviderUrl) {
-        const info = await this._info;
-        const network = /** @type {import('@arkade-os/sdk').NetworkName} */ (info.network);
-        const swapProvider = new BoltzSwapProvider({
-          apiUrl: cfg.swapProviderUrl,
-          network,
-          referralId: 'arkade-wdk-sdk',
-        });
-
-        /** @type {import('@arkade-os/boltz-swap').ArkadeSwapsCreateConfig} */
-        const swapsConfig = {
-          wallet,
-          swapProvider,
-          swapManager: { autoStart: true, pollInterval: 5_000 },
-        };
-        // Forward swapRepository from config if provided (e.g. a SQLite-
-        // backed repo passed by the RN-side initArkadeWallet).
-        if (cfg.swapRepository) {
-          swapsConfig.swapRepository = cfg.swapRepository;
-        }
-        swaps = await ArkadeSwaps.create(swapsConfig);
-      }
-
-      return { wallet, keyPair, swaps };
-    })();
-
-    this._walletPromises[path].catch(() => {
-      delete this._walletPromises[path];
-    });
-
-    return this._walletPromises[path];
-  }
-
-  /**
-   * @param {number} [index]
-   * @returns {Promise<WalletAccountArkade>}
-   */
-  async getAccount(index = 0) {
+  /** @param {number | string} [index] @param {{ signerName?: string }} [options] */
+  async getAccount(index = 0, options = {}) {
     this._disposeCheck();
-
+    if (typeof index !== 'number' || options.signerName) {
+      throw new Error(
+        'Arkade supports seed-derived accounts by numeric index; named signers are not supported.'
+      );
+    }
+    if (!Number.isSafeInteger(index) || index < 0 || index >= 2 ** 31) {
+      throw new Error('Invalid account index.');
+    }
     const info = await this._info;
-    const network = ['bitcoin', 'mainnet'].includes(String(info.network)) ? '0' : '1';
-    const path = `m/86'/${network}/0'/0/${index}`;
-
-    return this.getAccountByPath(path);
+    const coin = ['bitcoin', 'mainnet'].includes(String(info.network)) ? 0 : 1;
+    return this.getAccountByPath(`m/86'/${coin}/0'/0/${index}`);
   }
 
-  /**
-   * @param {string} path
-   * @returns {Promise<WalletAccountArkade>}
-   */
-  async getAccountByPath(path) {
+  /** @param {string} path @param {{ signerName?: string }} [options] */
+  async getAccountByPath(path, options = {}) {
     this._disposeCheck();
-
-    const cached = /** @type {WalletAccountArkade | undefined} */ (this._accounts[path]);
-    if (cached) return cached;
-
-    const { wallet, keyPair, swaps } = await this._getOrCreateWalletForPath(path);
-    const address = await wallet.getAddress();
-
-    const account = new WalletAccountArkade(
-      address,
-      path,
-      wallet,
-      keyPair,
-      wallet.indexerProvider,
-      this._info,
-      swaps
-    );
-
-    this._accounts[path] = account;
+    if (options.signerName) throw new Error('Arkade supports seed-derived accounts only.');
+    let pending = this._accountPromises.get(path);
+    if (!pending) {
+      pending = this._createAccount(path);
+      this._accountPromises.set(path, pending);
+      void pending.catch(() => {
+        this._accountPromises.delete(path);
+      });
+    }
+    const account = await pending;
+    this._disposeCheck();
     return account;
   }
 
-  /**
-   * Returns the current Arkade fee rate in sat/vB.
-   *
-   * Arkade has no mempool fee tiers — `txFeeRate` from `arkInfo.fees` is the
-   * single rate from the Arkade operator, so `normal` and `fast` are
-   * always equal. The split is preserved to match the WDK `FeeRates` shape.
-   *
-   * @returns {Promise<import('@tetherto/wdk').FeeRates>}
-   */
+  /** @private @param {string} path */
+  async _createAccount(path) {
+    const cfg = /** @type {ArkadeWalletConfig} */ (this._config);
+    const info = await this._info;
+    if (!this.seed) throw new Error('Arkade requires a seed-backed wallet manager.');
+    const master = HDKey.fromMasterSeed(this.seed);
+    let key;
+    try {
+      key = master.derive(path);
+    } finally {
+      master.wipePrivateData();
+    }
+    if (!key.privateKey || !key.publicKey) throw new Error(`Failed to derive key at ${path}`);
+
+    /** @type {Wallet | undefined} */
+    let wallet;
+    /** @type {import('@arkade-os/swap').SwapClient | undefined} */
+    let solver;
+    try {
+      wallet = await Wallet.create({
+        ...cfg,
+        ...(cfg.service
+          ? {}
+          : {
+              operatorProvider: this._arkProvider,
+              indexerProvider:
+                cfg.indexerProvider ?? (this._url ? new RestIndexerProvider(this._url) : undefined),
+            }),
+        identity: SingleKey.fromPrivateKey(key.privateKey),
+        // Bare has no IndexedDB; persistent repositories can be injected.
+        storage: (typeof cfg.storage === 'function' ? cfg.storage(path) : cfg.storage) ?? {
+          walletRepository: new InMemoryWalletRepository(),
+          contractRepository: new InMemoryContractRepository(),
+        },
+      });
+      if (cfg.solver) {
+        const solverConfig = cfg.solver(path);
+        if (!solverConfig.repository)
+          throw new Error('Solver swaps require a persistent repository.');
+        solver = createSwapClient({ ...solverConfig, wallet: withZeroChangeFee(wallet) });
+        await solver.ready;
+      }
+      const lnurl =
+        cfg.lnurl ??
+        (info.network === 'bitcoin'
+          ? { baseUrl: 'https://lnurl.arkade.sh', domain: 'arkade.money' }
+          : info.network === 'mutinynet'
+            ? { baseUrl: 'https://lnurl.mutinynet.arkade.sh', domain: 'lnurl.mutinynet.arkade.sh' }
+            : undefined);
+      const account = new WalletAccountArkade(
+        await wallet.getAddress(),
+        path,
+        wallet,
+        { privateKey: key.privateKey, publicKey: key.publicKey },
+        wallet.indexerProvider,
+        this._info,
+        {
+          solver,
+          lnurl,
+          config: {
+            transactionMaxFee: cfg.transactionMaxFee,
+            transferMaxFee: cfg.transferMaxFee,
+            paymentTimeoutMs: cfg.paymentTimeoutMs,
+          },
+        }
+      );
+      this._accounts[path] = account;
+      return account;
+    } catch (error) {
+      try {
+        await solver?.[Symbol.asyncDispose]();
+      } finally {
+        try {
+          await wallet?.dispose();
+        } finally {
+          key.wipePrivateData();
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** @returns {Promise<import('@tetherto/wdk-wallet').FeeRates>} */
   async getFeeRates() {
     this._disposeCheck();
-    const info = await this._info;
-    const rate = BigInt(Math.ceil(parseFeeRate(info.fees.txFeeRate)));
+    const feeRate = Number((await this._info).fees.txFeeRate);
+    if (!Number.isFinite(feeRate) || feeRate < 0) throw new Error('Invalid Arkade fee rate');
+    const rate = BigInt(Math.ceil(feeRate));
     return { normal: rate, fast: rate };
   }
 
-  async dispose() {
-    this._disposeCheck();
-    this._disposed = true;
-
-    super.dispose();
-
-    const walletPromises = Object.values(this._walletPromises);
-    this._walletPromises = {};
-
-    for (const wp of walletPromises) {
-      if (!wp) continue;
-      try {
-        const { wallet } = await wp;
-        await wallet.dispose();
-      } catch (_err) {
-        // Wallet creation may have failed — nothing to dispose
-      }
+  dispose() {
+    if (!this._disposePromise) {
+      this._disposePromise = (async () => {
+        try {
+          const created = await Promise.allSettled(this._accountPromises.values());
+          const disposed = await Promise.allSettled(
+            created.flatMap((result) =>
+              result.status === 'fulfilled' ? [result.value.dispose()] : []
+            )
+          );
+          const errors = disposed.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : []
+          );
+          if (errors.length) throw new AggregateError(errors, 'Arkade account disposal failed');
+        } finally {
+          super.dispose();
+          if (this.seed) sodium_memzero(this.seed);
+        }
+      })();
     }
-
-    sodium_memzero(this.seed);
+    return this._disposePromise;
   }
 }
 

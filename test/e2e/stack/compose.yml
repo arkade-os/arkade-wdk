@@ -1,0 +1,36 @@
+services:
+  nostr-tls:
+    image: nginx@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
+    container_name: ${REGTEST_CONTAINER_PREFIX:-wdk-e2e-}nostr-tls
+    ports:
+      - '127.0.0.1:57033:443'
+    volumes:
+      - ${WDK_E2E_STATE}/tls:/tls:ro
+      - ${WDK_E2E_STATE}/nginx.conf:/etc/nginx/nginx.conf:ro
+  intent-solver:
+    image: ghcr.io/arkade-os/intent-solver:0.5.0
+    command: [relay]
+    environment: !override
+      SOLVER_CONFIG: /config/solver.json
+      NODE_EXTRA_CA_CERTS: /config/ca.pem
+    ports: !override
+      - '127.0.0.1:57031:8788'
+    volumes:
+      - ${WDK_E2E_STATE}/solver.json:/config/solver.json:ro
+      - ${WDK_E2E_STATE}/tls/cert.pem:/config/ca.pem:ro
+    healthcheck:
+      test: [CMD-SHELL, 'test $(( $$(date +%s) - $$(stat -c %Y /data/relay-health 2>/dev/null || echo 0) )) -lt 60']
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 4
+  lnurl-server:
+    image: ghcr.io/arklabshq/lnurl-server:0.6.0
+    ports: !override
+      - '127.0.0.1:57032:3000'
+      - '127.0.0.1:80:3000'
+    environment:
+      - BASE_URL=http://localhost:57032
+      - NODE_EXTRA_CA_CERTS=/config/ca.pem
+    volumes:
+      - ${WDK_E2E_STATE}/tls/cert.pem:/config/ca.pem:ro

@@ -1,36 +1,57 @@
 diff --git a/package.json b/package.json
-index fd6fc94..ea59d93 100644
+index fd6fc94..2155c35 100644
 --- a/package.json
 +++ b/package.json
-@@ -40,8 +40,8 @@
+@@ -36,12 +36,14 @@
+   "scripts": {
+     "example": "yarn workspace react-native-wdk-context-provider-example",
+     "test": "jest --passWithNoTests",
++    "test:arkade-reset": "node --experimental-sqlite --test test/arkade-*.test.cjs",
+     "typecheck": "tsc",
      "lint": "eslint \"**/*.{js,ts,tsx}\"",
      "clean": "del-cli lib",
-     "prepare": "bob build && npm run gen:secret-manager-bundle && npm run gen:worker-bundle",
+-    "prepare": "bob build && npm run gen:secret-manager-bundle && npm run gen:worker-bundle",
 -    "gen:worker-bundle": "npx bare-pack --target ios-arm64 --target ios-arm64-simulator --target ios-x64-simulator --target android-arm --target android-arm64 --target android-ia32 --target android-x64 --linked --imports node_modules/@tetherto/pear-wrk-wdk/pack.imports.json --out lib/module/services/wdk-service/wdk-worklet.mobile.bundle.js node_modules/@tetherto/pear-wrk-wdk/src/wdk-worklet.js",
 -    "gen:secret-manager-bundle": "npx bare-pack --target ios-arm64 --target ios-arm64-simulator --target ios-x64-simulator --target android-arm --target android-arm64 --target android-ia32 --target android-x64 --linked --out lib/module/services/wdk-service/wdk-secret-manager-worklet.bundle.js src/worklet/wdk-secret-manager-worklet.js"
++    "prepare": "bob build && npm run gen:secret-manager-bundle && npm run gen:worker-bundle && npm run test:worklet-bundles",
++    "test:worklet-bundles": "node --test test/worklet-*.test.cjs",
 +    "gen:worker-bundle": "npx bare-pack@1 --target ios-arm64 --target ios-arm64-simulator --target ios-x64-simulator --target android-arm --target android-arm64 --target android-ia32 --target android-x64 --linked --imports node_modules/@tetherto/pear-wrk-wdk/pack.imports.json --out lib/module/services/wdk-service/wdk-worklet.mobile.bundle.js node_modules/@tetherto/pear-wrk-wdk/src/wdk-worklet.js",
-+    "gen:secret-manager-bundle": "npx bare-pack@1 --target ios-arm64 --target ios-arm64-simulator --target ios-x64-simulator --target android-arm --target android-arm64 --target android-ia32 --target android-x64 --linked --out lib/module/services/wdk-service/wdk-secret-manager-worklet.bundle.js src/worklet/wdk-secret-manager-worklet.js"
++    "gen:secret-manager-bundle": "npx bare-pack@1 --target ios-arm64 --target ios-arm64-simulator --target ios-x64-simulator --target android-arm --target android-arm64 --target android-ia32 --target android-x64 --linked --imports node_modules/@tetherto/pear-wrk-wdk/pack.imports.json --out lib/module/services/wdk-service/wdk-secret-manager-worklet.bundle.js src/worklet/wdk-secret-manager-worklet.js"
    },
    "keywords": [
      "react-native",
+@@ -99,7 +101,7 @@
+     "querystring-es3": "^0.2.1",
+     "react": ">=19.1.0",
+     "react-native": ">=0.81.4",
+-    "react-native-bare-kit": "^0.10.2",
++    "react-native-bare-kit": "^0.17.1",
+     "react-native-crypto": "^2.2.1",
+     "react-native-device-info": "^14.1.1",
+     "react-native-get-random-values": "^1.11.0",
+@@ -108,7 +110,12 @@
+     "react-native-url-polyfill": "^2.0.0",
+     "sodium-javascript": "^0.8.0",
+     "stream-browserify": "^3.0.0",
+-    "stream-http": "^3.2.0"
++    "stream-http": "^3.2.0",
++    "@arkade-os/sdk": "0.5.7",
++    "@arkade-os/swap": "0.1.7",
++    "@arkade-os/lnurl-client": "0.9.4",
++    "expo-crypto": "~15.0.9",
++    "expo-sqlite": "~16.0.10"
+   },
+   "packageManager": "npm@10.9.0",
+   "jest": {
 diff --git a/src/contexts/types.ts b/src/contexts/types.ts
-index aa13609..dc7a3f5 100644
+index aa13609..dfdb5d6 100644
 --- a/src/contexts/types.ts
 +++ b/src/contexts/types.ts
-@@ -37,6 +37,31 @@ export interface WalletContextType extends WalletContextState {
+@@ -37,6 +37,19 @@ export interface WalletContextType extends WalletContextState {
    refreshWalletBalance: () => Promise<void>;
    refreshTransactions: () => Promise<void>;
    unlockWallet: () => Promise<boolean | undefined>;
 +
-+  // ==========================================
-+  // Arkade-specific surface (Phase 2.9)
-+  //
-+  // These delegate to WDKService and through to the worklet's arkade* RPC
-+  // routes. Complex shapes are returned as `unknown` — UI consumers narrow
-+  // them with their own types since the upstream PendingSwap shape is large
-+  // and the provider intentionally doesn't import @arkade-os/boltz-swap on
-+  // the RN side.
-+  // ==========================================
 +  getBoardingAddress: (index?: number) => Promise<string>;
 +  createLightningInvoice: (
 +    amount: number,
@@ -40,23 +61,45 @@ index aa13609..dc7a3f5 100644
 +  getPendingLightningReceives: (index?: number) => Promise<unknown[]>;
 +  getPendingLightningSends: (index?: number) => Promise<unknown[]>;
 +  getSwapHistory: (index?: number) => Promise<unknown[]>;
-+  getLightningLimits: (index?: number) => Promise<unknown>;
-+  getLightningFees: (index?: number) => Promise<unknown>;
-+  waitForLightningPayment: (
-+    invoice: string,
-+    index?: number
-+  ) => Promise<{ txid: string }>;
++  getSwapMarkets: (index?: number) => Promise<unknown[]>;
++  subscribeToSwapUpdates: (callback: (update: unknown) => void, index?: number) => Promise<() => void>;
++  getLnurlReceiver: (index?: number) => Promise<{ lnurl: string; lightningAddress?: string }>;
  }
- 
+
  // Provider configuration
 diff --git a/src/contexts/wallet-context.tsx b/src/contexts/wallet-context.tsx
-index 4c3dff5..dd8018d 100644
+index 4c3dff5..d1368ea 100644
 --- a/src/contexts/wallet-context.tsx
 +++ b/src/contexts/wallet-context.tsx
-@@ -64,6 +64,20 @@ export function WalletProvider({
+@@ -1,6 +1,6 @@
+ import AsyncStorage from '@react-native-async-storage/async-storage';
+ import type { ReactNode } from 'react';
+-import { createContext, useContext, useEffect, useReducer } from 'react';
++import { createContext, useContext, useEffect, useReducer, useState } from 'react';
+ import { WDKService } from '../services/wdk-service';
+ import type {
+   AddressMap,
+@@ -37,6 +37,7 @@ export function WalletProvider({
+     walletReducer,
+     WALLET_CONTEXT_INITIAL_STATE
+   );
++  const [isHydrated, setIsHydrated] = useState(false);
+
+   // Set WDK config on mount
+   useEffect(() => {
+@@ -50,7 +51,7 @@ export function WalletProvider({
+
+   // Load wallet from storage on mount
+   useEffect(() => {
+-    loadStoredWallet();
++    loadStoredWallet().finally(() => setIsHydrated(true));
+   }, []);
+
+   useEffect(() => {
+@@ -64,6 +65,20 @@ export function WalletProvider({
      // eslint-disable-next-line react-hooks/exhaustive-deps
    }, [state.wallet?.enabledAssets, state.addresses]);
- 
+
 +  // Subscribe to Arkade incoming-funds notifications so balance and
 +  // transactions refresh automatically when VTXOs arrive — no manual
 +  // pull-to-refresh needed. The SDK uses SSE via ExpoArkProvider.
@@ -74,17 +117,64 @@ index 4c3dff5..dd8018d 100644
    // Save wallet to storage whenever wallet changes
    useEffect(() => {
      if (state.isInitialized && state.wallet) {
-@@ -384,6 +398,9 @@ export function WalletProvider({
+@@ -151,7 +166,7 @@ export function WalletProvider({
+     name: string;
+     mnemonic?: string;
+   }): Promise<WalletContextState['wallet']> => {
+-    if (!state.isInitialized) {
++    if (!state.isInitialized || !isHydrated) {
+       throw new Error('WDK is not initialized');
+     }
+
+@@ -160,15 +175,10 @@ export function WalletProvider({
+
+       const prf = await getUniqueId();
+
+-      if (params.mnemonic) {
+-        await WDKService.importSeedPhrase({ prf, seedPhrase: params.mnemonic });
+-      } else {
+-        await WDKService.createSeed({ prf });
+-      }
+-
+       const wallet = await WDKService.createWallet({
+         walletName: params.name,
+         prf,
++        seedPhrase: params.mnemonic,
+       });
+
+       const addresses = await getWalletAddresses(wallet.enabledAssets);
+@@ -218,15 +228,16 @@ export function WalletProvider({
+   };
+
+   const clearWallet = async () => {
+-    dispatch({ type: 'CLEAR_WALLET' });
+     try {
++      await WDKService.clearWallet();
+       await AsyncStorage.removeItem(STORAGE_KEY_WALLET);
+       await AsyncStorage.removeItem(STORAGE_KEY_ADDRESSES);
+       await AsyncStorage.removeItem(STORAGE_KEY_BALANCES);
+       await AsyncStorage.removeItem(STORAGE_KEY_TRANSACTIONS);
+-      await WDKService.clearWallet();
++      dispatch({ type: 'CLEAR_WALLET' });
+     } catch (error) {
+       console.error('Failed to clear wallet from AsyncStorage:', error);
++      throw error;
+     }
+   };
+
+@@ -384,14 +395,29 @@ export function WalletProvider({
      dispatch({ type: 'SET_TRANSACTIONS', payload: transactionMap });
    };
- 
+
 +  // Arkade methods are pass-throughs to the WDKService singleton; the context
 +  // value re-exposes them so consumers can use the useWallet() hook without
 +  // needing to know about the underlying service.
    const value: WalletContextType = {
      ...state,
++    isInitialized: state.isInitialized && isHydrated,
      createWallet,
-@@ -392,6 +409,18 @@ export function WalletProvider({
+     clearWallet,
+     clearError,
      refreshWalletBalance,
      refreshTransactions,
      unlockWallet,
@@ -96,15 +186,14 @@ index 4c3dff5..dd8018d 100644
 +    getPendingLightningSends: (index) =>
 +      WDKService.getPendingLightningSends(index),
 +    getSwapHistory: (index) => WDKService.getSwapHistory(index),
-+    getLightningLimits: (index) => WDKService.getLightningLimits(index),
-+    getLightningFees: (index) => WDKService.getLightningFees(index),
-+    waitForLightningPayment: (invoice, index) =>
-+      WDKService.waitForLightningPayment(invoice, index),
++    getSwapMarkets: (index) => WDKService.getSwapMarkets(index),
++    subscribeToSwapUpdates: (callback, index) => WDKService.subscribeToSwapUpdates(callback, index),
++    getLnurlReceiver: (index) => WDKService.getLnurlReceiver(index),
    };
- 
+
    return (
 diff --git a/src/services/wdk-service/index.ts b/src/services/wdk-service/index.ts
-index 5ae8528..4f2b542 100644
+index 5ae8528..d715a97 100644
 --- a/src/services/wdk-service/index.ts
 +++ b/src/services/wdk-service/index.ts
 @@ -13,6 +13,7 @@ import {
@@ -118,7 +207,7 @@ index 5ae8528..4f2b542 100644
 @@ -22,6 +23,107 @@ import {
    WdkSecretManagerStorage,
  } from './wdk-secret-manager-storage';
- 
+
 +// ============================================================================
 +// Inline bech32m decoder for Arkade addresses (Phase 2b)
 +//
@@ -236,7 +325,7 @@ index 5ae8528..4f2b542 100644
      case NetworkType.ETHEREUM:
        return 'ethereum';
      case NetworkType.TON:
-@@ -79,9 +187,38 @@ class WDKService {
+@@ -79,9 +187,41 @@ class WDKService {
    private wdkManager: WdkManager | null = null;
    private secretManager: any | null = null;
    private config: WDKServiceConfig | undefined;
@@ -245,9 +334,12 @@ index 5ae8528..4f2b542 100644
 +  private arkadeManager: any = null;
 +  private arkadeUnsubIncoming: (() => void) | null = null;
 +  private arkadeBalanceListeners: Array<() => void> = [];
- 
++  private walletLifecycle: Promise<unknown> = Promise.resolve();
++  private arkadeBalances = new Map<number, Record<string, { balance: number; asset: AssetTicker }>>();
++  private walletTransactions = new Map<number, Record<string, Transaction[]>>();
+
    private constructor() {}
- 
+
 +  /**
 +   * Register a callback that fires when the Arkade wallet detects incoming
 +   * funds (new VTXOs). The wallet-context uses this to auto-refresh balance
@@ -275,36 +367,83 @@ index 5ae8528..4f2b542 100644
    static getInstance(): WDKService {
      if (!WDKService.instance) {
        WDKService.instance = new WDKService();
-@@ -193,8 +330,17 @@ class WDKService {
-       // 3. Clear all keychain storage (entropy, seed, salt)
-       await WdkSecretManagerStorage.resetAllData();
- 
--      // 4. Reset internal state (but keep worklets alive)
-+      // 4. Reset internal state
-       this.walletManagerCache.clear();
+@@ -169,16 +309,21 @@ class WDKService {
+     }
+   }
+
+-  async clearWallet(): Promise<void> {
++  private withWalletLifecycle<T>(operation: () => Promise<T>): Promise<T> {
++    const pending = (this.walletLifecycle ?? Promise.resolve()).then(operation);
++    this.walletLifecycle = pending.then(() => undefined, () => undefined);
++    return pending;
++  }
++
++  clearWallet(): Promise<void> {
++    return this.withWalletLifecycle(() => this.clearWalletState());
++  }
++
++  private async clearWalletState(): Promise<void> {
+     try {
+       // 1. Gracefully stop worklet operations if they're running
+       if (this.wdkManager) {
+-        try {
+-          await this.wdkManager.workletStop();
+-        } catch (error) {
+-          // Worklet might not be started, ignore
+-          console.warn('Could not stop wdkManager worklet:', error);
+-        }
++        await this.wdkManager.workletStop({});
+       }
+
+       if (this.secretManager) {
+@@ -190,11 +335,20 @@ class WDKService {
+         }
+       }
+
+-      // 3. Clear all keychain storage (entropy, seed, salt)
+-      await WdkSecretManagerStorage.resetAllData();
 +      if (this.arkadeUnsubIncoming) {
 +        try { this.arkadeUnsubIncoming(); } catch (_e) { /* best-effort */ }
 +        this.arkadeUnsubIncoming = null;
 +      }
 +      if (this.arkadeManager) {
-+        try { await this.arkadeManager.dispose(); } catch (_e) { /* best-effort */ }
++        await this.arkadeManager.dispose();
 +        this.arkadeManager = null;
 +        this.arkadeAccount = null;
 +      }
- 
+
+-      // 4. Reset internal state (but keep worklets alive)
++      await WdkSecretManagerStorage.resetAllData();
+       this.walletManagerCache.clear();
++      this.arkadeBalances = new Map();
++      this.walletTransactions = new Map();
+
        // Note: We keep this.wdkManager and this.secretManager references intact
        // as the worklets are still running and can be reused
-@@ -205,6 +351,109 @@ class WDKService {
+@@ -205,6 +359,101 @@ class WDKService {
      }
    }
- 
-+  async initArkadeWallet(seedPhrase: string): Promise<void> {
+
++  initArkadeWallet(seedPhrase: string): Promise<void> {
++    return this.withWalletLifecycle(() => this.initializeArkadeWallet(seedPhrase));
++  }
++
++  private async initializeArkadeWallet(seedPhrase: string): Promise<void> {
 +    const arkadeConfig = this.config?.chains?.arkade;
 +    if (!arkadeConfig?.arkServerUrl) {
 +      console.warn('[arkade] Skipping wallet init — arkServerUrl not set');
 +      return;
 +    }
 +    try {
++      if (this.arkadeManager) {
++        this.arkadeUnsubIncoming?.();
++        this.arkadeUnsubIncoming = null;
++        await this.arkadeManager.dispose();
++        this.arkadeManager = null;
++        this.arkadeAccount = null;
++      }
++      this.arkadeBalances = new Map();
++      this.walletTransactions = new Map();
 +      // Use require() instead of dynamic import() — Metro resolves
 +      // require() through symlinks reliably, while import() fails with
 +      // "Unable to resolve module ./src/index" due to a Metro base-
@@ -312,79 +451,54 @@ index 5ae8528..4f2b542 100644
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
 +      const WalletManagerArkade = require('@arkade-os/wdk').default;
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
-+      const { ExpoArkProvider, ExpoIndexerProvider } = require('@arkade-os/sdk/adapters/expo');
++      const { ExpoOperatorProvider, ExpoIndexerProvider } = require('@arkade-os/sdk/adapters/expo');
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
-+      const { SQLiteWalletRepository, SQLiteContractRepository } = require('@arkade-os/sdk/repositories/sqlite');
++      const { SQLiteWalletRepository, SQLiteContractRepository, SQLiteBatchRegistrationRepository } = require('@arkade-os/sdk/repositories/sqlite');
 +      // eslint-disable-next-line @typescript-eslint/no-var-requires
 +      const SQLite = require('expo-sqlite');
++      const { SQLiteAssetSwapRepository } = require('@arkade-os/swap/repositories/sqlite');
++      const { createLnurlClient } = require('@arkade-os/lnurl-client');
++      const { fetch: expoFetch } = require('expo/fetch');
++      const Crypto = require('expo-crypto');
++      const walletNamespace = await Crypto.digestStringAsync('SHA-256', seedPhrase.normalize('NFKD'));
 +      const db = SQLite.openDatabaseSync('arkade-wallet.db');
 +      const executor = {
-+        run: (sql: string, params?: any[]) => db.runAsync(sql, params ?? []),
-+        get: (sql: string, params?: any[]) => db.getFirstAsync(sql, params ?? []),
++        run: async (sql: string, params?: any[]) => { await db.runAsync(sql, params ?? []); },
++        get: async (sql: string, params?: any[]) => (await db.getFirstAsync(sql, params ?? [])) ?? undefined,
 +        all: (sql: string, params?: any[]) => db.getAllAsync(sql, params ?? []),
 +      };
 +      const indexerUrl = arkadeConfig.indexerUrl || arkadeConfig.arkServerUrl;
 +
-+      // Build a SQLite-backed swap repository so ArkadeSwaps doesn't
-+      // default to IndexedDbSwapRepository (which isn't available on RN).
-+      // The schema is trivial: one table with id + type + JSON blob.
-+      await executor.run(
-+        `CREATE TABLE IF NOT EXISTS arkade_swaps (
-+          id TEXT PRIMARY KEY,
-+          type TEXT NOT NULL,
-+          status TEXT,
-+          createdAt INTEGER,
-+          data TEXT NOT NULL
-+        )`
-+      );
-+      const swapRepository = {
-+        version: 1 as const,
-+        async saveSwap(swap: any) {
-+          await executor.run(
-+            `INSERT OR REPLACE INTO arkade_swaps (id, type, status, createdAt, data)
-+             VALUES (?, ?, ?, ?, ?)`,
-+            [swap.id, swap.type, swap.status, swap.createdAt, JSON.stringify(swap)]
-+          );
-+        },
-+        async deleteSwap(id: string) {
-+          await executor.run('DELETE FROM arkade_swaps WHERE id = ?', [id]);
-+        },
-+        async getAllSwaps(filter?: any) {
-+          const rows: any[] = await executor.all('SELECT data FROM arkade_swaps ORDER BY createdAt DESC');
-+          let swaps = rows.map((r: any) => JSON.parse(r.data));
-+          if (filter?.id) {
-+            const ids = Array.isArray(filter.id) ? filter.id : [filter.id];
-+            swaps = swaps.filter((s: any) => ids.includes(s.id));
-+          }
-+          if (filter?.type) {
-+            const types = Array.isArray(filter.type) ? filter.type : [filter.type];
-+            swaps = swaps.filter((s: any) => types.includes(s.type));
-+          }
-+          if (filter?.status) {
-+            const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-+            swaps = swaps.filter((s: any) => statuses.includes(s.status));
-+          }
-+          return swaps;
-+        },
-+        async clear() {
-+          await executor.run('DELETE FROM arkade_swaps');
-+        },
-+        async [Symbol.asyncDispose]() { /* no-op */ },
-+      };
++      const operatorProvider = new ExpoOperatorProvider(arkadeConfig.arkServerUrl);
++      const { network } = await operatorProvider.getInfo();
++      const lnurl = arkadeConfig.lnurl ?? (network === 'bitcoin'
++        ? { baseUrl: 'https://lnurl.arkade.sh', domain: 'arkade.money' }
++        : network === 'mutinynet'
++          ? { baseUrl: 'https://lnurl.mutinynet.arkade.sh', domain: 'lnurl.mutinynet.arkade.sh' }
++          : undefined);
 +
++      const repositoryPrefix = (path: string) =>
++        `arkade_v2_${walletNamespace}_${path.replace(/[^a-zA-Z0-9]/g, '_')}_`;
 +      this.arkadeManager = new WalletManagerArkade(seedPhrase, {
 +        ...arkadeConfig,
-+        arkProvider: new ExpoArkProvider(arkadeConfig.arkServerUrl),
++        operatorProvider,
 +        indexerProvider: new ExpoIndexerProvider(indexerUrl),
-+        swapRepository,
-+        storage: {
-+          walletRepository: new SQLiteWalletRepository(executor),
-+          contractRepository: new SQLiteContractRepository(executor),
-+        },
++        solver: (path: string) => ({
++          ...arkadeConfig.solver,
++          repository: new SQLiteAssetSwapRepository(executor, {
++            prefix: repositoryPrefix(path),
++          }),
++        }),
++        lnurl: lnurl ? { ...lnurl, client: createLnurlClient({ baseUrl: lnurl.baseUrl, fetchImpl: expoFetch }) } : undefined,
++        storage: (path: string) => ({
++          walletRepository: new SQLiteWalletRepository(executor, { prefix: repositoryPrefix(path) }),
++          contractRepository: new SQLiteContractRepository(executor, { prefix: repositoryPrefix(path) }),
++          intentRepository: new SQLiteBatchRegistrationRepository(executor, { prefix: repositoryPrefix(path) }),
++        }),
 +      });
 +      this.arkadeAccount = await this.arkadeManager.getAccount(0);
 +
-+      // Subscribe to incoming funds — the SDK uses SSE (via ExpoArkProvider)
++      // Subscribe to incoming funds — the SDK uses SSE (via ExpoOperatorProvider)
 +      // to detect new VTXOs in real-time. When funds arrive, fire the
 +      // balance listeners so the wallet-context auto-refreshes.
 +      try {
@@ -396,38 +510,40 @@ index 5ae8528..4f2b542 100644
 +      }
 +    } catch (error) {
 +      console.error('[arkade] Failed to initialize wallet on RN side:', error);
-+      this.arkadeManager = null;
-+      this.arkadeAccount = null;
++      if (this.arkadeManager) {
++        await this.arkadeManager.dispose();
++        this.arkadeManager = null;
++        this.arkadeAccount = null;
++      }
++      throw error;
 +    }
 +  }
 +
    // WDK API Methods
    async createSeed(params: {
      prf: Buffer | ArrayBuffer | string;
-@@ -359,6 +608,14 @@ class WDKService {
+@@ -359,6 +608,12 @@ class WDKService {
          network: toNetwork(network),
          accountIndex: index,
        });
 +    } else if (network === NetworkType.ARKADE) {
-+      if (!this.arkadeAccount) return { address: '' };
-+      return { address: await this.arkadeAccount.getAddress() };
++      return { address: await (await this.getArkadeAccount(index)).getAddress() };
 +    } else if (network === NetworkType.ARKADE_BOARDING) {
-+      if (!this.arkadeAccount) return { address: '' };
-+      return { address: await this.arkadeAccount.getBoardingAddress() };
++      return { address: await (await this.getArkadeAccount(index)).getBoardingAddress() };
 +    } else if (network === NetworkType.LIGHTNING) {
 +      return { address: '' };
      } else {
        return await this.wdkManager.getAbstractedAddress({
          network: toNetwork(network),
-@@ -375,6 +632,7 @@ class WDKService {
+@@ -375,6 +630,7 @@ class WDKService {
        throw new Error('WDK Manager not initialized');
      }
- 
+
 +    const ADDRESS_RESOLUTION_TIMEOUT_MS = 10000;
      const addressPromises = [];
      const networkAddresses: Partial<Record<NetworkType, string>> = {};
      const addressesArr = [];
-@@ -382,9 +640,28 @@ class WDKService {
+@@ -382,9 +638,28 @@ class WDKService {
      for (const asset of enabledAssets) {
        for (const networkType of Object.keys(AssetAddressMap[asset])) {
          addressesArr.push({ [networkType]: null });
@@ -458,8 +574,8 @@ index 5ae8528..4f2b542 100644
 +        addressPromises.push(raced);
        }
      }
- 
-@@ -395,18 +672,22 @@ class WDKService {
+
+@@ -395,18 +670,22 @@ class WDKService {
          // @ts-expect-error
          networkAddresses[key] = (addresses[i] as any).value.address;
        } else {
@@ -474,7 +590,7 @@ index 5ae8528..4f2b542 100644
          );
        }
      });
- 
+
 -    networkAddresses[NetworkType.POLYGON] =
 -      networkAddresses[NetworkType.ETHEREUM];
 -    networkAddresses[NetworkType.ARBITRUM] =
@@ -485,32 +601,48 @@ index 5ae8528..4f2b542 100644
 +      networkAddresses[NetworkType.ARBITRUM] =
 +        networkAddresses[NetworkType.ETHEREUM];
 +    }
- 
+
      return networkAddresses;
    }
-@@ -432,6 +713,16 @@ class WDKService {
+@@ -420,6 +699,7 @@ class WDKService {
+   ) {
+     try {
+       if (network === NetworkType.SEGWIT) {
++        if (!this.wdkManager) throw new Error('WDK Manager not initialized');
+         const value = new Decimal(amount)
+           .mul(this.getDenominationValue(AssetTicker.BTC))
+           .toNumber();
+@@ -432,6 +712,16 @@ class WDKService {
            },
          });
- 
+
 +        return Number(quote.fee) / this.getDenominationValue(AssetTicker.BTC);
 +      } else if (isArkadeNetwork(network)) {
-+        if (!this.arkadeAccount) throw new Error('Arkade wallet not initialized');
++        const account = await this.getArkadeAccount(index);
 +        const value = new Decimal(amount)
 +          .mul(this.getDenominationValue(AssetTicker.BTC))
 +          .toNumber();
-+        const quote = await this.arkadeAccount.quoteSendTransaction({
++        const quote = await account.quoteSendTransaction({
 +          to: recipientAddress,
 +          value: value.toString(),
 +        });
          return Number(quote.fee) / this.getDenominationValue(AssetTicker.BTC);
        } else if (
          [
+@@ -442,6 +732,7 @@ class WDKService {
+         ].includes(network)
+       ) {
+         const sendAmount = 1000;
++        if (!this.wdkManager) throw new Error('WDK Manager not initialized');
+
+         const config = {
+           paymasterToken: {
 @@ -520,6 +811,16 @@ class WDKService {
        });
- 
+
        return response;
 +    } else if (isArkadeNetwork(network)) {
-+      if (!this.arkadeAccount) throw new Error('Arkade wallet not initialized');
++      const account = await this.getArkadeAccount(index);
 +      const sendParams = {
 +        to: recipientAddress,
 +        value: new Decimal(amount)
@@ -518,14 +650,15 @@ index 5ae8528..4f2b542 100644
 +          .round()
 +          .toString(),
 +      };
-+      return await this.arkadeAccount.sendTransaction(sendParams);
++      return await account.sendTransaction(sendParams);
      } else if (
        [
          NetworkType.ETHEREUM,
-@@ -571,6 +872,91 @@ class WDKService {
+@@ -571,10 +872,116 @@ class WDKService {
      }
    }
- 
+
+-  async createWallet(params: {
 +  // ==========================================================================
 +  // Arkade-specific methods (Phase 2.7)
 +  //
@@ -538,57 +671,68 @@ index 5ae8528..4f2b542 100644
 +
 +  // Arkade methods — call RN-side arkadeAccount directly (not HRPC worklet)
 +
-+  async getBoardingAddress(_index: number = 0): Promise<string> {
-+    if (!this.arkadeAccount) throw new Error('Arkade wallet not initialized');
-+    return await this.arkadeAccount.getBoardingAddress();
++  private async getArkadeAccount(index: number = 0): Promise<any> {
++    if (!this.arkadeManager) throw new Error('Arkade wallet not initialized');
++    return this.arkadeManager.getAccount(index);
 +  }
 +
-+  async createLightningInvoice(
-+    amount: number,
-+    description?: string,
-+    _index: number = 0
-+  ): Promise<{ invoice: string; paymentHash: string }> {
-+    if (!this.arkadeAccount) throw new Error('Arkade wallet not initialized');
-+    return await this.arkadeAccount.createLightningInvoice(amount, description);
++  async getBoardingAddress(index: number = 0): Promise<string> {
++    return (await this.getArkadeAccount(index)).getBoardingAddress();
 +  }
 +
-+  async getPendingLightningReceives(_index: number = 0): Promise<unknown[]> {
-+    if (!this.arkadeAccount) return [];
-+    return await this.arkadeAccount.getPendingLightningReceives();
++  private async requireArkadeSwapClient(index: number = 0): Promise<any> {
++    const account = await this.getArkadeAccount(index);
++    if (!account.swapClient) throw new Error('Arkade solver swaps not initialized');
++    return account.swapClient;
 +  }
 +
-+  async getPendingLightningSends(_index: number = 0): Promise<unknown[]> {
-+    if (!this.arkadeAccount) return [];
-+    return await this.arkadeAccount.getPendingLightningSends();
++  async subscribeToSwapUpdates(callback: (update: unknown) => void, index: number = 0): Promise<() => void> {
++    return (await this.requireArkadeSwapClient(index)).onUpdate(callback);
 +  }
 +
-+  async getSwapHistory(_index: number = 0): Promise<unknown[]> {
-+    if (!this.arkadeAccount) return [];
-+    return await this.arkadeAccount.getSwapHistory();
++  async createLightningInvoice(amount: number, _description?: string, index: number = 0): Promise<{ invoice: string; paymentHash: string }> {
++    if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Enter a positive whole number of sats');
++    if (_description) throw new Error('Solver invoices do not support custom descriptions');
++    const swap = await (await this.requireArkadeSwapClient(index)).receive({ via: 'lightning', amount: BigInt(amount) });
++    return { invoice: swap.artifact.bolt11, paymentHash: swap.lock.hash };
 +  }
 +
-+  async getLightningLimits(_index: number = 0): Promise<unknown> {
-+    if (!this.arkadeAccount) return {};
-+    return await this.arkadeAccount.getLightningLimits();
++  async getPendingLightningReceives(index: number = 0): Promise<unknown[]> {
++    const swaps = await (await this.requireArkadeSwapClient(index)).swaps();
++    return swaps.filter((swap: any) => swap.route.give.corridor === 'lightning' &&
++      !['claimed', 'paid', 'filled', 'cancelled', 'refunded', 'lapsed', 'failed'].includes(swap.outcome));
 +  }
 +
-+  async getLightningFees(_index: number = 0): Promise<unknown> {
-+    if (!this.arkadeAccount) return {};
-+    return await this.arkadeAccount.getLightningFees();
++  async getPendingLightningSends(index: number = 0): Promise<unknown[]> {
++    const swaps = await (await this.requireArkadeSwapClient(index)).swaps();
++    return swaps.filter((swap: any) => swap.route.take.corridor === 'lightning' &&
++      !['claimed', 'paid', 'filled', 'cancelled', 'refunded', 'lapsed', 'failed'].includes(swap.outcome));
 +  }
 +
-+  async waitForLightningPayment(
-+    invoice: string,
-+    _index: number = 0
-+  ): Promise<{ txid: string }> {
-+    if (!this.arkadeAccount) throw new Error('Arkade wallet not initialized');
-+    return await this.arkadeAccount.waitForLightningPayment(invoice);
++  async getSwapHistory(index: number = 0): Promise<unknown[]> {
++    return (await this.requireArkadeSwapClient(index)).swaps();
 +  }
 +
-+  async getArkadeTransactionHistory(_index: number = 0): Promise<Transaction[]> {
-+    if (!this.arkadeAccount) return [];
-+    const arkTxs = await this.arkadeAccount.getTransactionHistory();
-+    const walletAddr = (await this.arkadeAccount.getAddress()) || 'arkade-self';
++  async getSwapMarkets(index: number = 0): Promise<unknown[]> {
++    return (await this.requireArkadeSwapClient(index)).markets();
++  }
++
++  async getLnurlReceiver(index: number = 0): Promise<{ lnurl: string; lightningAddress?: string }> {
++    const account = await this.getArkadeAccount(index);
++    const { bootstrapReceiver } = require('@arkade-os/lnurl-client/arkade');
++    const facade = account.getLnurl();
++    const result = await bootstrapReceiver(facade, { autoClaimNameless: true, refresh: true });
++    const receiver = result.kind === 'ready' ? result.receiver
++      : result.capabilities.allocationModes.includes('random') && !result.capabilities.requireApiKey
++        ? await facade.claim({}) : undefined;
++    if (!receiver) throw new Error('This LNURL service requires address registration');
++    return { lnurl: receiver.lnurl, lightningAddress: receiver.lightningAddress };
++  }
++
++  async getArkadeTransactionHistory(index: number = 0): Promise<Transaction[]> {
++    const account = await this.getArkadeAccount(index);
++    const arkTxs = await account.getTransactionHistory();
++    const walletAddr = (await account.getAddress()) || 'arkade-self';
 +    return (arkTxs || []).map((tx: any) => {
 +      const isSent = tx.type === 'SENT';
 +      return {
@@ -611,77 +755,171 @@ index 5ae8528..4f2b542 100644
 +    });
 +  }
 +
-   async createWallet(params: {
++  createWallet(params: {
      walletName: string;
      prf: Buffer | string;
-@@ -613,6 +999,8 @@ class WDKService {
++    seedPhrase?: string;
+   }): Promise<Wallet> {
++    return this.withWalletLifecycle(() => this.createWalletState(params));
++  }
++
++  private async createWalletState(params: {
++    walletName: string;
++    prf: Buffer | string;
++    seedPhrase?: string;
++  }): Promise<Wallet> {
++    if (params.seedPhrase) await this.importSeedPhrase({ prf: params.prf, seedPhrase: params.seedPhrase });
+     let seed = await this.retrieveSeed(params.prf);
+
+     if (!seed) {
+@@ -613,83 +1020,92 @@ class WDKService {
        data: wallet,
      });
- 
-+    await this.initArkadeWallet(seed);
+
++    await this.initializeArkadeWallet(seed);
 +
      return wallet;
    }
- 
-@@ -637,6 +1025,14 @@ class WDKService {
-     const transactionMap: Record<string, Transaction[]> = {};
-     const payloadKeys: string[] = []; // Track the keys in order to match with response array
- 
-+    // Arkade transactions go through the worklet's arkadeGetTransactionHistory
-+    // route (one call per enabled BTC asset, not per network type), since the
-+    // SDK returns ArkTransaction[] for the whole account regardless of which
-+    // sub-NetworkType the consumer is asking about. We populate the map for
-+    // ARKADE/LIGHTNING/ARKADE_BOARDING by mirroring the same list under each
-+    // key — the receive/send screens then filter as needed.
-+    let arkadeTransactions: Transaction[] | null = null;
-+
-     enabledAssets.forEach((asset) => {
-       const networks = AssetBalanceMap[asset];
-       if (!networks) return;
-@@ -645,6 +1041,10 @@ class WDKService {
-         const key = `${networkType}_${asset}`;
-         transactionMap[key] = [];
- 
-+        // Skip arkade variants — they'll be filled in below from the
-+        // arkadeGetTransactionHistory call.
-+        if (isArkadeNetwork(networkType as NetworkType)) return;
-+
+
+   async resolveWalletTransactions(
+     enabledAssets: AssetTicker[],
+-    networkAddresses: Partial<Record<NetworkType, string>>
++    networkAddresses: Partial<Record<NetworkType, string>>,
++    index: number = 0
+   ): Promise<Record<string, Transaction[]>> {
+     const headers = new Headers();
+     headers.append('accept', 'application/json');
+     headers.append('x-api-key', this.getIndexerApiKey());
+     headers.append('Content-Type', 'application/json');
++    const payload: { blockchain: string; token: AssetTicker; address: string; limit: number }[] = [];
++    const payloadKeys: string[] = [];
++    const arkadeKey = `${NetworkType.ARKADE}_${AssetTicker.BTC}`;
++    const includeArkade = enabledAssets.includes(AssetTicker.BTC);
+
+-    const payload: {
+-      blockchain: string;
+-      token: AssetTicker;
+-      address: string;
+-      limit: number;
+-      fromTs?: number;
+-      toTs?: number;
+-    }[] = [];
+-
+-    const transactionMap: Record<string, Transaction[]> = {};
+-    const payloadKeys: string[] = []; // Track the keys in order to match with response array
+-
+-    enabledAssets.forEach((asset) => {
+-      const networks = AssetBalanceMap[asset];
+-      if (!networks) return;
+-
+-      Object.keys(networks).forEach((networkType) => {
+-        const key = `${networkType}_${asset}`;
+-        transactionMap[key] = [];
+-
++    for (const asset of enabledAssets) {
++      for (const networkType of Object.keys(AssetBalanceMap[asset] ?? {})) {
++        if (isArkadeNetwork(networkType as NetworkType)) continue;
          const address = networkAddresses[networkType as NetworkType];
- 
-         if (address) {
-@@ -659,6 +1059,31 @@ class WDKService {
-       });
-     });
- 
-+    // Fetch the Arkade transaction history once if BTC has any arkade variant
-+    // enabled. The history is the same regardless of which variant we ask for.
-+    const btcNetworks = AssetBalanceMap[AssetTicker.BTC];
-+    const hasArkadeVariant = (
-+      Object.keys(btcNetworks ?? {}) as NetworkType[]
-+    ).some((n) => isArkadeNetwork(n));
-+    if (enabledAssets.includes(AssetTicker.BTC) && hasArkadeVariant) {
-+      try {
-+        arkadeTransactions = await this.getArkadeTransactionHistory();
-+      } catch (err) {
-+        console.warn('[arkade] Failed to fetch transaction history:', err);
-+        arkadeTransactions = [];
++        if (!address) continue;
++        payload.push({ blockchain: networkType, token: asset, address, limit: 100 });
++        payloadKeys.push(`${networkType}_${asset}`);
 +      }
-+      // Only put transactions under the ARKADE key — mirroring under all
-+      // three variants (ARKADE, ARKADE_BOARDING, LIGHTNING) caused 3x
-+      // duplication in the activity screen.
-+      transactionMap[`${NetworkType.ARKADE}_${AssetTicker.BTC}`] =
-+        arkadeTransactions;
 +    }
-+
-+    // Short-circuit the WDK indexer call if every enabled entry was arkade.
-+    if (payload.length === 0) {
-+      return transactionMap;
+
+-        if (address) {
+-          payload.push({
+-            blockchain: networkType,
+-            token: asset,
+-            address,
+-            limit: 100,
+-          });
+-          payloadKeys.push(key); // Track which key this payload corresponds to
+-        }
+-      });
+-    });
+-
+-    const requestOptions = {
+-      method: 'POST',
+-      headers: headers,
+-      body: JSON.stringify(payload),
+-    };
++    const cached = this.walletTransactions ??= new Map();
++    const jobs: Promise<Record<string, Transaction[]>>[] = [];
++    const labels: string[] = [];
++    if (payload.length > 0) {
++      labels.push('WDK indexer');
++      jobs.push(this._fetchIndexerTransactions(payload, payloadKeys, headers));
 +    }
++    if (includeArkade) {
++      labels.push('Arkade');
++      jobs.push(this.getArkadeTransactionHistory(index).then(history => ({ [arkadeKey]: history })));
++    }
++    if (jobs.length === 0) return {};
 +
-     const requestOptions = {
-       method: 'POST',
-       headers: headers,
-@@ -699,6 +1124,10 @@ class WDKService {
++    const results = await Promise.allSettled(jobs);
++    if (this.walletTransactions !== cached) throw new Error('Wallet changed during history refresh');
++    const requestedKeys = new Set([...payloadKeys, ...(includeArkade ? [arkadeKey] : [])]);
++    const transactionMap = Object.fromEntries(Object.entries(cached.get(index) ?? {})
++      .filter(([key]) => requestedKeys.has(key)));
++    const errors: unknown[] = [];
++    for (const [position, result] of results.entries()) {
++      if (result.status === 'fulfilled') {
++        Object.assign(transactionMap, result.value);
++      } else {
++        console.warn(`[transactions] ${labels[position]} leg failed:`, result.reason);
++        errors.push(result.reason);
++      }
++    }
++    if (errors.length === jobs.length) {
++      throw new AggregateError(errors, 'Failed to fetch transaction history from every source');
++    }
++    cached.set(index, transactionMap);
++    return transactionMap;
++  }
+
++  private async _fetchIndexerTransactions(
++    payload: { blockchain: string; token: AssetTicker; address: string; limit: number }[],
++    payloadKeys: string[],
++    headers: Headers
++  ): Promise<Record<string, Transaction[]>> {
+     const response = await fetch(
+       `${this.getIndexerUrl()}/api/${this.getIndexerVersion()}/batch/token-transfers`,
+-      requestOptions
++      { method: 'POST', headers, body: JSON.stringify(payload) }
+     );
+-
+-    if (!response.ok) {
+-      throw new Error(`Failed to fetch transactions: ${response.status}`);
+-    }
+-
+-    const data = await response.json();
+-
+-    // Process the batch response array - each element corresponds to a payload item by index
+-    (data as Array<{ transfers: Transaction[] }>).forEach((item, index) => {
+-      const key = payloadKeys[index];
+-      if (key) {
+-        transactionMap[key] = item.transfers || [];
+-      }
++    if (!response.ok) throw new Error(`Failed to fetch transactions: ${response.status}`);
++    const data = await response.json() as Array<{ transfers: Transaction[] }>;
++    const transactionMap: Record<string, Transaction[]> = {};
++    data.forEach((item, position) => {
++      const key = payloadKeys[position];
++      if (key) transactionMap[key] = item.transfers || [];
+     });
+-
+     return transactionMap;
+   }
+
+   async resolveWalletBalances(
+     enabledAssets: AssetTicker[],
+-    networkAddresses: Partial<Record<NetworkType, string>>
++    networkAddresses: Partial<Record<NetworkType, string>>,
++    index: number = 0
+   ): Promise<
+     Record<
+       string,
+@@ -699,6 +1115,10 @@ class WDKService {
        }
      >
    > {
@@ -692,9 +930,9 @@ index 5ae8528..4f2b542 100644
      const headers = new Headers();
      headers.append('accept', 'application/json');
      headers.append('x-api-key', this.getIndexerApiKey());
-@@ -715,6 +1144,9 @@ class WDKService {
+@@ -715,6 +1135,9 @@ class WDKService {
        if (!networks) return;
- 
+
        Object.keys(networks).forEach((networkType) => {
 +        // Skip arkade variants — they go through resolveArkadeBalances.
 +        if (isArkadeNetwork(networkType as NetworkType)) return;
@@ -702,10 +940,10 @@ index 5ae8528..4f2b542 100644
          const address = networkAddresses[networkType as NetworkType];
          if (address) {
            payload.push({
-@@ -726,6 +1158,38 @@ class WDKService {
+@@ -726,6 +1149,38 @@ class WDKService {
        });
      });
- 
+
 +    // Use allSettled so a transient failure on one leg (e.g. the WDK indexer
 +    // returning a 524 upstream timeout) doesn't poison the other. Each leg
 +    // owns its own balance keys, so a partial result is still useful — the
@@ -713,7 +951,7 @@ index 5ae8528..4f2b542 100644
 +    // WDK indexer is down, and vice versa.
 +    const [indexerResult, arkadeResult] = await Promise.allSettled([
 +      payload.length > 0 ? this._fetchIndexerBalances(payload, headers) : Promise.resolve({}),
-+      this.resolveArkadeBalances(enabledAssets, networkAddresses),
++      this.resolveArkadeBalances(enabledAssets, networkAddresses, index),
 +    ]);
 +
 +    const indexerMap = indexerResult.status === 'fulfilled' ? indexerResult.value : {};
@@ -741,10 +979,10 @@ index 5ae8528..4f2b542 100644
      const requestOptions = {
        method: 'POST',
        headers: headers,
-@@ -743,14 +1207,22 @@ class WDKService {
- 
+@@ -743,14 +1198,22 @@ class WDKService {
+
      const data = await response.json();
- 
+
 -    const balanceMap = Object.entries(
 +    return Object.entries(
        data as Record<
@@ -766,43 +1004,49 @@ index 5ae8528..4f2b542 100644
          allBalances[`${obj.blockchain}_${obj.token}`] = {
            balance: parseFloat(obj.amount),
            asset: obj.token as AssetTicker,
-@@ -759,8 +1231,33 @@ class WDKService {
+@@ -759,8 +1222,39 @@ class WDKService {
        },
        {} as Record<string, { balance: number; asset: AssetTicker }>
      );
 +  }
- 
--    return balanceMap;
++
 +  async resolveArkadeBalances(
 +    enabledAssets: AssetTicker[],
-+    _networkAddresses: Partial<Record<NetworkType, string>>
++    _networkAddresses: Partial<Record<NetworkType, string>>,
++    index: number = 0
 +  ): Promise<Record<string, { balance: number; asset: AssetTicker }>> {
 +    const result: Record<string, { balance: number; asset: AssetTicker }> = {};
-+    if (!this.arkadeAccount) return result;
-+
++    if (!this.arkadeManager) return result;
++    const cached = this.arkadeBalances ??= new Map();
+
+-    return balanceMap;
 +    for (const asset of enabledAssets) {
 +      const networks = AssetBalanceMap[asset];
 +      if (!networks || !(NetworkType.ARKADE in networks)) continue;
 +
 +      try {
 +        const denom = this.getDenominationValue(AssetTicker.BTC);
-+        const balance = Number(await this.arkadeAccount.getBalance()) / denom;
++        const details = await (await this.getArkadeAccount(index)).getBalanceDetails();
++        const balance = (details.total - details.boarding.total) / denom;
 +
 +        result[`${NetworkType.ARKADE}_${asset}`] = { balance, asset };
-+        if (NetworkType.LIGHTNING in networks) {
-+          result[`${NetworkType.LIGHTNING}_${asset}`] = { balance, asset };
++        if (NetworkType.ARKADE_BOARDING in networks && details.boarding.loaded !== false) {
++          result[`${NetworkType.ARKADE_BOARDING}_${asset}`] = {
++            balance: details.boarding.total / denom, asset,
++          };
 +        }
 +      } catch (err) {
 +        console.warn('[arkade] Failed to fetch balance:', err);
-+        result[`${NetworkType.ARKADE}_${asset}`] = { balance: 0, asset };
++        Object.assign(result, cached.get(index));
 +      }
 +    }
++    cached.set(index, result);
 +    return result;
    }
  }
- 
+
 diff --git a/src/services/wdk-service/types.ts b/src/services/wdk-service/types.ts
-index 6663b0e..6e96528 100644
+index 6663b0e..b862bff 100644
 --- a/src/services/wdk-service/types.ts
 +++ b/src/services/wdk-service/types.ts
 @@ -7,6 +7,8 @@ export enum AssetTicker {
@@ -817,7 +1061,7 @@ index 6663b0e..6e96528 100644
 @@ -15,9 +17,25 @@ export enum NetworkType {
    ARBITRUM = 'arbitrum',
  }
- 
+
 +// Arkade variants — each maps a single BTC asset to a different "mode" on the
 +// same underlying Arkade account: ARKADE = offchain Arkade address, ARKADE_BOARDING
 +// = on-chain BTC boarding deposit, LIGHTNING = swap-backed Lightning invoice.
@@ -850,10 +1094,10 @@ index 6663b0e..6e96528 100644
    },
    [AssetTicker.USDT]: {
      [NetworkType.ETHEREUM]: 'ethereum',
-@@ -113,6 +134,31 @@ export interface BitcoinChainConfig {
+@@ -113,6 +134,33 @@ export interface BitcoinChainConfig {
    port: number;
  }
- 
+
 +/**
 + * Configuration for the Arkade 'chain'.
 + *
@@ -874,18 +1118,730 @@ index 6663b0e..6e96528 100644
 +   *  be set explicitly. */
 +  indexerUrl?: string;
 +  esploraUrl?: string;
-+  /** Boltz swap provider URL. Required for Lightning send/receive support.
-+   *  When omitted, Lightning transactions will throw "Lightning support not configured". */
-+  swapProviderUrl?: string;
++  lnurl?: { baseUrl: string; domain?: string };
++  solver?: Omit<import('@arkade-os/swap').SwapClientConfig, 'wallet' | 'repository'>;
++  onchainProvider?: import('@arkade-os/sdk').WalletConfig['onchainProvider'];
++  emulator?: import('@arkade-os/sdk').WalletConfig['emulator'];
++  settlementConfig?: import('@arkade-os/sdk').WalletConfig['settlementConfig'];
 +}
 +
  export interface TronChainConfig {
    chainId: number;
    provider: string;
-@@ -133,5 +179,6 @@ export interface ChainsConfig {
+@@ -133,5 +181,6 @@ export interface ChainsConfig {
    polygon?: EVMChainConfig;
    ton?: TONChainConfig;
    bitcoin?: BitcoinChainConfig;
 +  arkade?: ArkadeChainConfig;
    tron?: TronChainConfig;
  }
+diff --git a/src/worklet/wdk-secret-manager-worklet.js b/src/worklet/wdk-secret-manager-worklet.js
+index c2a3231..aec4c6b 100644
+--- a/src/worklet/wdk-secret-manager-worklet.js
++++ b/src/worklet/wdk-secret-manager-worklet.js
+@@ -3,8 +3,7 @@ const HRPC = require('../spec/hrpc');
+ const b4a = require('b4a');
+ const { getEnum } = require('../spec/schema');
+ const { WdkSecretManager } = require('@tetherto/wdk-secret-manager');
+-// eslint-disable-next-line no-undef
+-const { IPC } = BareKit;
++const { IPC } = globalThis.BareKit ?? globalThis.Bare;
+
+ const rpc = new HRPC(IPC);
+
+diff --git a/test/arkade-history.test.cjs b/test/arkade-history.test.cjs
+new file mode 100644
+index 0000000..c0c450d
+--- /dev/null
++++ b/test/arkade-history.test.cjs
+@@ -0,0 +1,138 @@
++const fs = require('node:fs');
++const path = require('node:path');
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const ts = require('typescript');
++const file = path.join(__dirname, '../src/services/wdk-service/index.ts');
++const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
++const declaration = source.statements.find(ts.isClassDeclaration);
++const names = new Set(['resolveWalletTransactions', '_fetchIndexerTransactions', 'getArkadeTransactionHistory', 'clearWalletState']);
++const methods = declaration.members.filter(m => names.has(m.name?.getText(source))).map(m => m.getText(source));
++const code = ts.transpileModule(`class Service { ${methods.join('\n')} }`, {
++  compilerOptions: { target: ts.ScriptTarget.ES2022 },
++}).outputText;
++const types = {};
++new Function('exports', ts.transpileModule(
++  fs.readFileSync(path.join(__dirname, '../src/services/wdk-service/types.ts'), 'utf8'),
++  { compilerOptions: { module: ts.ModuleKind.CommonJS } }
++).outputText)(types);
++
++const received = { key: { arkTxid: 'native-received' }, type: 'RECEIVED', amount: 50000, createdAt: 1794934800000 };
++const legacy = { transactionHash: 'legacy-received', amount: '0.00010000' };
++const addresses = { bitcoin: 'legacy-address', arkade: 'arkade-address' };
++
++function makeService(options = {}) {
++  const calls = [];
++  const warnings = [];
++  const fetch = async (_url, requestOptions) => {
++    calls.push(['indexer', JSON.parse(requestOptions.body)]);
++    if (options.indexerFails) throw new Error('legacy indexer offline');
++    return { ok: true, json: async () => [{ transfers: [legacy] }] };
++  };
++  const Service = new Function('fetch', 'AssetBalanceMap', 'AssetTicker', 'NetworkType', 'isArkadeNetwork', 'console', 'WdkSecretManagerStorage', `${code}; return Service`)(
++    fetch, types.AssetBalanceMap, types.AssetTicker, types.NetworkType, types.isArkadeNetwork,
++    { warn: (...args) => warnings.push(args) }, { resetAllData: async () => {} }
++  );
++  const service = new Service();
++  service.walletManagerCache = new Map();
++  service.getIndexerApiKey = () => 'test-key';
++  service.getIndexerUrl = () => 'https://indexer.invalid';
++  service.getIndexerVersion = () => 'v1';
++  service.getArkadeAccount = async index => {
++    calls.push(['account', index]);
++    if (options.arkadeFails) throw new Error('Arkade history offline');
++    return { getTransactionHistory: options.history ?? (async () => [received]), getAddress: async () => addresses.arkade };
++  };
++  return { service, calls, warnings };
++}
++
++test('legacy indexer failure preserves the SDK received transaction and account index', async () => {
++  const { service, calls, warnings } = makeService({ indexerFails: true });
++  const result = await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses, 2);
++  assert.equal(result.arkade_btc.length, 1);
++  assert.equal(result.arkade_btc[0].transactionHash, received.key.arkTxid);
++  assert.equal(result.arkade_btc[0].amount, '0.00050000');
++  assert.equal(result.arkade_btc[0].to, addresses.arkade);
++  assert.equal(result.bitcoin_btc, undefined);
++  assert.equal(result.lightning_btc, undefined);
++  assert.equal(result['arkade-boarding_btc'], undefined);
++  assert.ok(calls.some(call => call[0] === 'account' && call[1] === 2));
++  assert.ok(warnings.some(args => args.some(arg => arg?.message === 'legacy indexer offline')));
++});
++
++test('Arkade failure preserves successful legacy history without inventing empty Arkade history', async () => {
++  const { service, warnings } = makeService({ arkadeFails: true });
++  const result = await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  assert.deepEqual(result.bitcoin_btc, [legacy]);
++  assert.equal(result.arkade_btc, undefined);
++  assert.ok(warnings.some(args => args.some(arg => arg?.message === 'Arkade history offline')));
++});
++
++test('failure of every attempted history source rejects instead of erasing history', async () => {
++  const { service } = makeService({ arkadeFails: true, indexerFails: true });
++  await assert.rejects(service.resolveWalletTransactions([types.AssetTicker.BTC], addresses),
++    error => error instanceof AggregateError && error.errors.length === 2);
++});
++
++test('Arkade-only history failure rejects and never requests the legacy indexer', async () => {
++  const { service, calls } = makeService({ arkadeFails: true });
++  await assert.rejects(service.resolveWalletTransactions([types.AssetTicker.BTC], { arkade: addresses.arkade }),
++    error => error instanceof AggregateError && error.errors.length === 1);
++  assert.equal(calls.some(call => call[0] === 'indexer'), false);
++});
++
++test('successful independent history sources are merged once', async () => {
++  const { service } = makeService();
++  const result = await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  assert.deepEqual(Object.keys(result).sort(), ['arkade_btc', 'bitcoin_btc']);
++  assert.deepEqual(result.bitcoin_btc, [legacy]);
++  assert.equal(result.arkade_btc[0].transactionHash, received.key.arkTxid);
++});
++
++for (const source of ['indexerFails', 'arkadeFails']) test(`last successful history survives a later ${source} failure`, async () => {
++  const options = {};
++  const { service } = makeService(options);
++  const before = await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  options[source] = true;
++  const after = await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  assert.deepEqual(after, before);
++});
++
++test('history cached for one account cannot fill an unavailable source for another', async () => {
++  const options = {};
++  const { service } = makeService(options);
++  await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses, 0);
++  options.indexerFails = true;
++  const result = await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses, 1);
++  assert.equal(result.bitcoin_btc, undefined);
++  assert.equal(result.arkade_btc[0].transactionHash, received.key.arkTxid);
++});
++
++test('wallet reset clears prior history before another wallet can read it', async () => {
++  const options = {};
++  const { service } = makeService(options);
++  await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  await service.clearWalletState();
++  options.indexerFails = true;
++  const result = await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  assert.equal(result.bitcoin_btc, undefined);
++});
++
++test('failure of every source still rejects after a successful cached history read', async () => {
++  const options = {};
++  const { service } = makeService(options);
++  await service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  options.indexerFails = options.arkadeFails = true;
++  await assert.rejects(service.resolveWalletTransactions([types.AssetTicker.BTC], addresses), AggregateError);
++});
++
++test('a history read that completes after reset cannot republish the prior wallet history', async () => {
++  let finish;
++  const history = new Promise(resolve => { finish = resolve; });
++  const { service } = makeService({ history: () => history });
++  const reading = service.resolveWalletTransactions([types.AssetTicker.BTC], addresses);
++  await service.clearWalletState();
++  finish([received]);
++  await assert.rejects(reading, /Wallet changed during history refresh/);
++  assert.equal(service.walletTransactions.size, 0);
++});
+diff --git a/test/arkade-provider.test.cjs b/test/arkade-provider.test.cjs
+new file mode 100644
+index 0000000..b35be92
+--- /dev/null
++++ b/test/arkade-provider.test.cjs
+@@ -0,0 +1,187 @@
++const fs = require('node:fs');
++const path = require('node:path');
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const ts = require('typescript');
++const Decimal = require('decimal.js');
++const file = path.join(__dirname, '../src/services/wdk-service/index.ts');
++const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
++const declaration = source.statements.find(ts.isClassDeclaration);
++const names = new Set(['withWalletLifecycle', 'clearWallet', 'clearWalletState',
++  'initArkadeWallet', 'initializeArkadeWallet', 'getArkadeAccount', 'getAssetAddress',
++  'getBoardingAddress', 'requireArkadeSwapClient', 'createLightningInvoice',
++  'getPendingLightningReceives', 'getPendingLightningSends', 'getSwapHistory',
++  'getSwapMarkets', 'getArkadeTransactionHistory', 'getDenominationValue',
++  'quoteSendByNetwork', 'sendByNetwork', 'resolveArkadeBalances', 'subscribeToSwapUpdates',
++  'createWallet', 'createWalletState']);
++const methods = declaration.members.filter(m => names.has(m.name?.getText(source))).map(m => m.getText(source));
++const code = ts.transpileModule(`class Service { ${methods.join('\n')} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
++const types = {};
++new Function('exports', ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/services/wdk-service/types.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(types);
++
++function makeService(overrides = {}) {
++  const calls = [];
++  const accounts = [0, 1, 2].map(index => ({
++    getAddress: async () => `address-${index}`,
++    getBoardingAddress: async () => `boarding-${index}`,
++    getBalance: async () => 3000n,
++    getBalanceDetails: async () => ({ total: 3000, boarding: { total: 1000 } }),
++    quoteSendTransaction: async () => { calls.push(`quote-${index}`); return { fee: 10n }; },
++    sendTransaction: async () => { calls.push(`send-${index}`); return { hash: `tx-${index}`, fee: 10n }; },
++    subscribeToIncomingFunds: async () => { calls.push(`subscribe-${index}`); return () => calls.push(`unsubscribe-${index}`); },
++    getTransactionHistory: async () => [{ key: { arkTxid: `history-${index}` }, type: 'SENT', amount: 1000, createdAt: 1 }],
++    swapClient: {
++      receive: async () => { calls.push(`invoice-${index}`); return { artifact: { bolt11: `invoice-${index}` }, lock: { hash: `hash-${index}` } }; },
++      swaps: async () => [{ id: `swap-${index}`, outcome: 'funded', route: { give: { corridor: 'lightning' }, take: { corridor: 'arkade' } } }],
++      markets: async () => [`market-${index}`],
++      onUpdate: callback => { callback({ swap: { id: `swap-${index}` } }); return () => calls.push(`unsub-swap-${index}`); },
++    },
++  }));
++  const manager = {
++    getAccount: async index => { calls.push(`account-${index}`); return accounts[index]; },
++    dispose: async () => calls.push('dispose'),
++    ...overrides.manager,
++  };
++  const localRequire = name => {
++    if (name === '@arkade-os/wdk') return { default: class { constructor() { return manager; } } };
++    if (name === '@arkade-os/sdk/adapters/expo') {
++      const Provider = class { async getInfo() { return { network: 'regtest' }; } };
++      return { ExpoOperatorProvider: Provider, ExpoIndexerProvider: Provider };
++    }
++    if (name === 'expo-sqlite') return { openDatabaseSync: () => ({}) };
++    if (name === 'expo/fetch') return { fetch };
++    if (name === 'expo-crypto') return { digestStringAsync: overrides.digest ?? (async () => 'namespace') };
++    return require(name);
++  };
++  const worklet = { workletStart: async () => calls.push('worklet-start'), workletStop: async () => calls.push('worklet-stop') };
++  const Service = new Function('require', 'WdkSecretManagerStorage', 'NetworkType', 'AssetTicker', 'AssetBalanceMap', 'isArkadeNetwork', 'Decimal', 'BareWorkletApi', `${code}; return Service`)(
++    localRequire, { resetAllData: async () => calls.push('erase') }, types.NetworkType,
++    types.AssetTicker, types.AssetBalanceMap, types.isArkadeNetwork, Decimal,
++    { hrpcInstances: { wdkManager: worklet } });
++  const service = new Service();
++  service.config = { chains: { arkade: { arkServerUrl: 'http://regtest.invalid' } } };
++  service.wdkManager = {};
++  service.walletManagerCache = new Map([['wallet', {}]]);
++  service.arkadeManager = manager;
++  service.arkadeAccount = accounts[0];
++  service.notifyArkadeBalanceListeners = () => {};
++  service.getChainsConfig = () => ({});
++  return { service, calls, accounts, manager };
++}
++
++test('reset waits for initialization before disposing and erasing the seed', async () => {
++  let finish, started;
++  const waiting = new Promise(resolve => { finish = resolve; });
++  const began = new Promise(resolve => { started = resolve; });
++  const { service, calls } = makeService({ digest: async () => { started(); await waiting; return 'namespace'; } });
++  service.arkadeManager = null;
++  service.arkadeAccount = null;
++  service.wdkManager = null;
++  const opening = service.initArkadeWallet('test seed');
++  await began;
++  const resetting = service.clearWallet();
++  try { assert.equal(calls.includes('erase'), false); } finally { finish(); }
++  await Promise.all([opening, resetting]);
++  assert.equal(service.arkadeManager, null);
++  assert.equal(service.arkadeAccount, null);
++  assert.ok(calls.indexOf('dispose') < calls.indexOf('erase'));
++  assert.ok(calls.indexOf('subscribe-0') < calls.indexOf('erase'));
++});
++
++test('failed account initialization disposes its manager and rejects', async () => {
++  const { service, calls } = makeService({ manager: { getAccount: async () => { throw new Error('account restore failed'); } } });
++  service.arkadeManager = null;
++  service.arkadeAccount = null;
++  await assert.rejects(service.initArkadeWallet('test seed'), /account restore failed/);
++  assert.equal(calls.filter(call => call === 'dispose').length, 1);
++  assert.equal(service.arkadeManager, null);
++  service.wdkManager = null;
++  await service.clearWallet();
++  assert.ok(calls.includes('erase'));
++});
++
++for (const stage of ['retrieving', 'importing']) test(`reset waits for wallet creation still ${stage} its seed`, async () => {
++  let finish, started;
++  const waiting = new Promise(resolve => { finish = resolve; });
++  const began = new Promise(resolve => { started = resolve; });
++  const { service, calls } = makeService();
++  service.arkadeManager = null;
++  service.arkadeAccount = null;
++  service.wdkManager = null;
++  const pause = async () => { started(); await waiting; };
++  service.retrieveSeed = async () => { if (stage === 'retrieving') await pause(); return 'test seed'; };
++  service.importSeedPhrase = pause;
++  const creating = service.createWallet({ walletName: 'test', prf: 'fixture', ...(stage === 'importing' ? { seedPhrase: 'imported seed' } : {}) });
++  await began;
++  const resetting = service.clearWallet();
++  try { assert.equal(calls.includes('erase'), false); } finally { finish(); }
++  await Promise.all([creating, resetting]);
++  assert.equal(service.arkadeManager, null);
++  assert.equal(service.walletManagerCache.size, 0);
++  assert.ok(calls.indexOf('worklet-start') < calls.indexOf('dispose'));
++  assert.ok(calls.indexOf('dispose') < calls.indexOf('erase'));
++});
++
++test('every indexed Arkade operation uses the requested account', async () => {
++  const { service, calls } = makeService();
++  assert.deepEqual(await service.getAssetAddress(types.NetworkType.ARKADE, 2), { address: 'address-2' });
++  assert.deepEqual(await service.getAssetAddress(types.NetworkType.ARKADE_BOARDING, 2), { address: 'boarding-2' });
++  assert.equal(await service.getBoardingAddress(2), 'boarding-2');
++  assert.equal(await service.quoteSendByNetwork(types.NetworkType.ARKADE, 2, 0.00001, 'dest', types.AssetTicker.BTC), 0.0000001);
++  assert.equal((await service.sendByNetwork(types.NetworkType.ARKADE, 2, 0.00001, 'dest', types.AssetTicker.BTC)).hash, 'tx-2');
++  assert.deepEqual(await service.createLightningInvoice(1000, undefined, 2), { invoice: 'invoice-2', paymentHash: 'hash-2' });
++  assert.equal((await service.getPendingLightningReceives(2))[0].id, 'swap-2');
++  assert.deepEqual(await service.getPendingLightningSends(2), []);
++  assert.equal((await service.getSwapHistory(2))[0].id, 'swap-2');
++  assert.deepEqual(await service.getSwapMarkets(2), ['market-2']);
++  assert.equal((await service.getArkadeTransactionHistory(2))[0].transactionHash, 'history-2');
++  assert.ok(calls.includes('quote-2') && calls.includes('send-2') && calls.includes('invoice-2'));
++  assert.equal(calls.includes('account-0'), false);
++});
++
++test('balance reads separate boarding funds and never mirror Lightning', async () => {
++  const { service } = makeService();
++  assert.deepEqual(await service.resolveArkadeBalances([types.AssetTicker.BTC], {}), {
++    arkade_btc: { balance: 0.00002, asset: 'btc' },
++    'arkade-boarding_btc': { balance: 0.00001, asset: 'btc' },
++  });
++});
++
++test('unavailable balances do not overwrite the last successful balance with zero', async () => {
++  const { service, accounts } = makeService();
++  const successful = await service.resolveArkadeBalances([types.AssetTicker.BTC], {});
++  accounts[0].getBalance = accounts[0].getBalanceDetails = async () => { throw new Error('offline'); };
++  assert.deepEqual(await service.resolveArkadeBalances([types.AssetTicker.BTC], {}), successful);
++  accounts[1].getBalanceDetails = async () => { throw new Error('other account offline'); };
++  assert.deepEqual(await service.resolveArkadeBalances([types.AssetTicker.BTC], {}, 1), {});
++  service.arkadeBalances = new Map();
++  assert.deepEqual(await service.resolveArkadeBalances([types.AssetTicker.BTC], {}), {});
++});
++
++test('swap subscriptions preserve account scope, replay, and unsubscription', async () => {
++  const { service, calls } = makeService();
++  const updates = [];
++  const unsubscribe = await service.subscribeToSwapUpdates(update => updates.push(update), 2);
++  assert.equal(updates[0].swap.id, 'swap-2');
++  unsubscribe();
++  assert.ok(calls.includes('unsub-swap-2'));
++});
++
++test('the wallet context preserves its metadata and state when teardown fails', async () => {
++  const contextFile = path.join(__dirname, '../src/contexts/wallet-context.tsx');
++  const context = ts.createSourceFile(contextFile, fs.readFileSync(contextFile, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
++  let clear;
++  const visit = node => {
++    if (ts.isVariableDeclaration(node) && node.name.getText(context) === 'clearWallet') clear = node.initializer.getText(context);
++    ts.forEachChild(node, visit);
++  };
++  visit(context);
++  assert.ok(clear);
++  const calls = [];
++  const clearCode = ts.transpileModule(`const clear = ${clear}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
++  const invoke = new Function('WDKService', 'AsyncStorage', 'dispatch', 'STORAGE_KEY_WALLET', 'STORAGE_KEY_ADDRESSES', 'STORAGE_KEY_BALANCES', 'STORAGE_KEY_TRANSACTIONS', `${clearCode}; return clear`)(
++    { clearWallet: async () => { throw new Error('drain failed'); } },
++    { removeItem: async key => calls.push(key) }, action => calls.push(action), 'wallet', 'addresses', 'balances', 'transactions');
++  await assert.rejects(invoke(), /drain failed/);
++  assert.deepEqual(calls, []);
++});
+diff --git a/test/arkade-reset.test.cjs b/test/arkade-reset.test.cjs
+new file mode 100644
+index 0000000..112b1b4
+--- /dev/null
++++ b/test/arkade-reset.test.cjs
+@@ -0,0 +1,125 @@
++const fs = require('node:fs');
++const path = require('node:path');
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const ts = require('typescript');
++const file = path.join(__dirname, '../src/services/wdk-service/index.ts');
++const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
++const service = source.statements.find(ts.isClassDeclaration);
++const method = service.members.filter(m => ['withWalletLifecycle', 'clearWallet', 'clearWalletState'].includes(m.name?.getText(source))).map(m => m.getText(source)).join('\n');
++const code = ts.transpileModule(`class Service { ${method} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
++
++for (const rejectDrain of [false, true]) {
++  test(`reset retains keychain during teardown${rejectDrain ? ' and on teardown failure' : ''}`, async () => {
++    const calls = [];
++    let finish, started;
++    const waiting = new Promise(resolve => { finish = resolve; });
++    const drainStarted = new Promise(resolve => { started = resolve; });
++    const storage = { resetAllData: async () => { calls.push('erase'); } };
++    const Service = new Function('WdkSecretManagerStorage', `${code}; return Service`)(storage);
++    const instance = new Service();
++    instance.walletManagerCache = { clear: () => calls.push('clear') };
++    instance.arkadeUnsubIncoming = () => calls.push('unsubscribe');
++    instance.arkadeAccount = {};
++    instance.arkadeManager = { dispose: async () => {
++      calls.push('drain-started'); started(); await waiting;
++      if (rejectDrain) throw new Error('drain failed');
++      calls.push('drain-finished');
++    } };
++    const clearing = instance.clearWallet();
++    await drainStarted;
++    try { assert.equal(calls.includes('erase'), false); } finally { finish(); }
++    if (rejectDrain) {
++      await assert.rejects(clearing, /drain failed/);
++      assert.equal(calls.includes('erase'), false);
++      assert.equal(calls.includes('clear'), false);
++    } else {
++      await clearing;
++      assert.ok(calls.indexOf('erase') > calls.indexOf('drain-finished'));
++      assert.equal(instance.arkadeManager, null);
++      assert.equal(instance.arkadeAccount, null);
++    }
++  });
++}
++
++
++test('worklet stop failure preserves keychain and cache', async () => {
++  const calls = [];
++  const storage = { resetAllData: async () => calls.push('erase') };
++  const Service = new Function('WdkSecretManagerStorage', `${code}; return Service`)(storage);
++  const instance = new Service();
++  instance.wdkManager = { workletStop: async () => { throw new Error('worklet drain failed'); } };
++  instance.walletManagerCache = { clear: () => calls.push('clear') };
++  await assert.rejects(instance.clearWallet(), /worklet drain failed/);
++  assert.deepEqual(calls, []);
++});
++
++test('SQLite state is isolated by seed and path and survives reopening the same file', async () => {
++  const { DatabaseSync } = require('node:sqlite');
++  const { createHash } = require('node:crypto');
++  const { mkdtempSync } = require('node:fs');
++  const { tmpdir } = require('node:os');
++  const sqlite = require('@arkade-os/sdk/repositories/sqlite');
++  const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'wdk-provider-storage-')), 'arkade-wallet.db');
++  const init = service.members.filter(m => ['withWalletLifecycle', 'initArkadeWallet', 'initializeArkadeWallet'].includes(m.name?.getText(source))).map(m => m.getText(source)).join('\n');
++  const initCode = ts.transpileModule(`class Service { ${init} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
++  const configs = [];
++  let db = new DatabaseSync(dbPath);
++  const database = () => ({
++    runAsync: async (sql, params) => db.prepare(sql).run(...params),
++    getFirstAsync: async (sql, params) => db.prepare(sql).get(...params),
++    getAllAsync: async (sql, params) => db.prepare(sql).all(...params),
++  });
++  const localRequire = name => {
++    if (name === '@arkade-os/wdk') return { default: class {
++      constructor(_seed, config) { configs.push(config); }
++      async getAccount() { return { subscribeToIncomingFunds: async () => () => {} }; }
++    } };
++    if (name === '@arkade-os/sdk/adapters/expo') {
++      const Provider = class { async getInfo() { return { network: 'regtest' }; } };
++      return { ExpoOperatorProvider: Provider, ExpoIndexerProvider: Provider };
++    }
++    if (name === 'expo-sqlite') return { openDatabaseSync: database };
++    if (name === 'expo/fetch') return { fetch };
++    if (name === 'expo-crypto') return { digestStringAsync: async (_algorithm, text) => createHash('sha256').update(text).digest('hex') };
++    return require(name);
++  };
++  const Service = new Function('require', `${initCode}; return Service`)(localRequire);
++  async function open(seed, accountPath = "m/86'/1/0'/0/0") {
++    const instance = new Service();
++    instance.config = { chains: { arkade: { arkServerUrl: 'http://regtest.invalid' } } };
++    await instance.initArkadeWallet(seed);
++    assert.ok(instance.arkadeManager);
++    const config = configs.at(-1);
++    return typeof config.storage === 'function' ? config.storage(accountPath) : config.storage;
++  }
++  try {
++    const executor = {
++      run: async (sql, params = []) => { db.prepare(sql).run(...params); },
++      get: async (sql, params = []) => db.prepare(sql).get(...params),
++      all: async (sql, params = []) => db.prepare(sql).all(...params),
++    };
++    const legacy = new sqlite.SQLiteWalletRepository(executor);
++    await legacy.saveWalletState({ settings: { marker: 'legacy' } });
++    const first = await open('seed one');
++    assert.equal(await first.walletRepository.getWalletState(), null);
++    await first.walletRepository.saveWalletState({ settings: { marker: 'first wallet' } });
++    await first.contractRepository.saveContract({ script: 'aa', address: 'old-address', type: 'default', params: {}, state: 'active', createdAt: 1 });
++    await first.intentRepository.saveBatchRegistration({ proofTxId: 'old-proof', state: 'cancelled', createdAt: 1, updatedAt: 1, registerProof: '', registerProofMessage: '', deleteProof: '', deleteProofMessage: '', partialForfeits: [], proofInputs: [] });
++    const otherPath = await open('seed one', "m/86'/1/0'/0/1");
++    assert.equal(await otherPath.walletRepository.getWalletState(), null);
++    assert.deepEqual((await otherPath.contractRepository.getContractsPage(undefined, { limit: 10 })).items, []);
++    db.close(); db = new DatabaseSync(dbPath);
++    const second = await open('seed two');
++    assert.equal(await second.walletRepository.getWalletState(), null);
++    assert.deepEqual((await second.contractRepository.getContractsPage(undefined, { limit: 10 })).items, []);
++    assert.deepEqual((await second.intentRepository.getBatchRegistrationsPage(undefined, { limit: 10 })).items, []);
++    await second.walletRepository.saveWalletState({ settings: { marker: 'second wallet' } });
++    db.close(); db = new DatabaseSync(dbPath);
++    const restored = await open('seed one');
++    assert.equal((await restored.walletRepository.getWalletState()).settings.marker, 'first wallet');
++    assert.equal((await restored.contractRepository.getContractsPage(undefined, { limit: 10 })).items[0].script, 'aa');
++    assert.equal((await restored.intentRepository.getBatchRegistrationsPage(undefined, { limit: 10 })).items[0].proofTxId, 'old-proof');
++    assert.equal((await legacy.getWalletState()).settings.marker, 'legacy');
++  } finally { db.close(); }
++});
+diff --git a/test/arkade-startup.test.cjs b/test/arkade-startup.test.cjs
+new file mode 100644
+index 0000000..4c64c1c
+--- /dev/null
++++ b/test/arkade-startup.test.cjs
+@@ -0,0 +1,153 @@
++const fs = require('node:fs');
++const path = require('node:path');
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const ts = require('typescript');
++
++const tick = () => new Promise(resolve => setImmediate(resolve));
++const storedWallet = { name: 'Restored wallet', enabledAssets: [] };
++
++function deferred() {
++  let resolve;
++  const promise = new Promise(finish => { resolve = finish; });
++  return { promise, resolve };
++}
++
++function provider({ stored, initialized = Promise.resolve() }) {
++  const slots = [];
++  const effects = [];
++  let cursor = 0;
++  let pending = [];
++  let createCalls = 0;
++  const react = {
++    createContext: () => ({ Provider: 'WalletContext' }),
++    useState(initial) {
++      const index = cursor++;
++      if (!(index in slots)) slots[index] = initial;
++      return [slots[index], value => { slots[index] = value; }];
++    },
++    useReducer(reducer, initial) {
++      const index = cursor++;
++      slots[index] ??= initial;
++      return [slots[index], action => { slots[index] = reducer(slots[index], action); }];
++    },
++    useEffect(effect, deps) {
++      const index = cursor++;
++      const previous = effects[index]?.deps;
++      if (!previous || !deps || deps.some((value, i) => !Object.is(value, previous[i]))) {
++        pending.push({ index, effect, deps });
++      }
++    },
++  };
++  const storage = {
++    getItem: key => key === 'wdk_wallet_data' ? stored : Promise.resolve(null),
++    setItem: async () => {},
++  };
++  const service = {
++    setConfig() {},
++    initialize: () => initialized,
++    onArkadeBalanceChange: () => () => {},
++    createWallet: async () => { createCalls++; return storedWallet; },
++    resolveWalletAddresses: async () => ({}),
++  };
++  const mocks = {
++    react,
++    'react/jsx-runtime': { jsx: (type, props) => ({ type, props }) },
++    '@react-native-async-storage/async-storage': storage,
++    '../services/wdk-service': { WDKService: service },
++    'react-native-device-info': { getUniqueId: async () => 'device' },
++    '../utils/get-balances-from-balance-map': value => value,
++    '../utils/get-transactions-from-transaction-map': value => value,
++  };
++  function load(relative) {
++    const file = path.join(__dirname, '../src/contexts', relative);
++    const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
++      compilerOptions: {
++        module: ts.ModuleKind.CommonJS,
++        jsx: ts.JsxEmit.ReactJSX,
++        esModuleInterop: true,
++      },
++    }).outputText;
++    const exported = {};
++    new Function('exports', 'require', code)(exported, name => {
++      assert.ok(name in mocks, `Unexpected context dependency: ${name}`);
++      return mocks[name];
++    });
++    return exported;
++  }
++  mocks['./constants'] = load('constants.ts');
++  mocks['./reducer'] = load('reducer.ts');
++  const { WalletProvider } = load('wallet-context.tsx');
++  const config = { indexer: {} };
++  return {
++    render() {
++      cursor = 0;
++      pending = [];
++      const tree = WalletProvider({ children: null, config });
++      for (const { index, effect, deps } of pending) {
++        effects[index]?.cleanup?.();
++        effects[index] = { deps, cleanup: effect() };
++      }
++      return tree.props.value;
++    },
++    get createCalls() { return createCalls; },
++    unmount() { for (const effect of effects) effect?.cleanup?.(); },
++  };
++}
++
++test('startup waits for stored wallet hydration after the SDK initializes', async () => {
++  const storage = deferred();
++  const view = provider({ stored: storage.promise });
++  try {
++    view.render();
++    await tick();
++    assert.equal(view.render().isInitialized, false);
++    storage.resolve(JSON.stringify(storedWallet));
++    await tick();
++    const state = view.render();
++    assert.equal(state.isInitialized, true);
++    assert.deepEqual(state.wallet, storedWallet);
++    assert.equal(state.isUnlocked, false);
++  } finally { view.unmount(); }
++});
++
++test('hydrated metadata does not bypass pending SDK initialization', async () => {
++  const initialization = deferred();
++  const view = provider({ stored: Promise.resolve(JSON.stringify(storedWallet)), initialized: initialization.promise });
++  try {
++    view.render();
++    await tick();
++    const restoring = view.render();
++    assert.deepEqual(restoring.wallet, storedWallet);
++    assert.equal(restoring.isInitialized, false);
++    initialization.resolve();
++    await tick();
++    assert.equal(view.render().isInitialized, true);
++  } finally { view.unmount(); }
++});
++
++test('a fresh installation becomes ready only after confirming no stored wallet', async () => {
++  const storage = deferred();
++  const view = provider({ stored: storage.promise });
++  try {
++    view.render();
++    await tick();
++    assert.equal(view.render().isInitialized, false);
++    storage.resolve(null);
++    await tick();
++    const state = view.render();
++    assert.equal(state.isInitialized, true);
++    assert.equal(state.wallet, null);
++  } finally { view.unmount(); }
++});
++
++test('wallet creation cannot overwrite metadata before hydration completes', async () => {
++  const storage = deferred();
++  const view = provider({ stored: storage.promise });
++  try {
++    view.render();
++    await tick();
++    await assert.rejects(view.render().createWallet({ name: 'New wallet' }), /not initialized/);
++    assert.equal(view.createCalls, 0);
++  } finally { storage.resolve(null); await tick(); view.unmount(); }
++});
+diff --git a/test/worklet-bridge.test.cjs b/test/worklet-bridge.test.cjs
+new file mode 100644
+index 0000000..9068c98
+--- /dev/null
++++ b/test/worklet-bridge.test.cjs
+@@ -0,0 +1,32 @@
++const { readFileSync } = require('node:fs');
++const { createRequire } = require('node:module');
++const path = require('node:path');
++const { Duplex } = require('node:stream');
++const vm = require('node:vm');
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++
++for (const namespace of ['BareKit', 'Bare']) {
++  test(`secret-manager starts over real HRPC with ${namespace}.IPC`, { timeout: 5000 }, async () => {
++    const file = path.join(__dirname, '../src/worklet/wdk-secret-manager-worklet.js');
++    const workerRequire = createRequire(file);
++    const clientStream = new Duplex({ read() {}, write(chunk, _encoding, done) { serverStream.push(chunk); done(); } });
++    const serverStream = new Duplex({ read() {}, write(chunk, _encoding, done) { clientStream.push(chunk); done(); } });
++    try {
++      vm.runInNewContext(readFileSync(file, 'utf8'), {
++        require: name => name === '@tetherto/wdk-secret-manager'
++          ? { WdkSecretManager: class { constructor() { throw new Error('Handshake must not access secrets'); } } }
++          : workerRequire(name),
++        [namespace]: { IPC: serverStream },
++        console: { error() {}, warn() {}, info() {}, debug() {}, log() {} },
++      }, { filename: file });
++      const HRPC = workerRequire('../spec/hrpc');
++      const client = new HRPC(clientStream);
++      const response = await client.commandWorkletStart({ enableDebugLogs: 0 });
++      assert.equal(response.status, 'started');
++    } finally {
++      clientStream.destroy();
++      serverStream.destroy();
++    }
++  });
++}
+diff --git a/test/worklet-bundles.test.cjs b/test/worklet-bundles.test.cjs
+new file mode 100644
+index 0000000..e9c1a2f
+--- /dev/null
++++ b/test/worklet-bundles.test.cjs
+@@ -0,0 +1,25 @@
++const { readFileSync } = require('node:fs');
++const path = require('node:path');
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++
++for (const name of ['wdk-secret-manager-worklet.bundle.js', 'wdk-worklet.mobile.bundle.js']) {
++  test(`${name} resolves complete native modules without legacy shims`, () => {
++    const file = path.join(__dirname, '../lib/module/services/wdk-service', name);
++    const source = readFileSync(file, 'utf8');
++    assert.ok(source.startsWith('module.exports = '));
++    const bundle = JSON.parse(source.slice('module.exports = '.length).trim().replace(/;$/, ''));
++    const firstLine = bundle.indexOf('\n');
++    const manifest = JSON.parse(bundle.slice(firstLine + 1, bundle.indexOf('\n', firstLine + 1)));
++    const files = Object.keys(manifest.resolutions);
++    assert.ok(files.some(file => file.endsWith('/bare-type/binding.js')));
++    assert.doesNotMatch(JSON.stringify(manifest.resolutions), /bare-(type|performance|abort|stdio)-jsshim/);
++    for (const file of files.filter(file => /bare-(type|performance|abort|stdio)\/binding.js$/.test(file))) {
++      const binding = manifest.resolutions[file]['.'];
++      const moduleName = file.split('/').at(-2);
++      assert.match(binding.android, new RegExp(`^linked:lib${moduleName}\\.\\d+\\.\\d+\\.\\d+\\.so$`));
++      assert.ok(manifest.addons.includes(binding.android), file);
++      assert.ok(manifest.addons.includes(binding.ios), file);
++    }
++  });
++}

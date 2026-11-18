@@ -1,374 +1,299 @@
 # @arkade-os/wdk
 
-WDK-compatible Bitcoin wallet manager/account implementation built on top of `@arkade-os/sdk`, with optional Lightning support through `@arkade-os/boltz-swap`.
+A WDK-compatible Bitcoin wallet adapter built on `@arkade-os/sdk`, with solver swaps
+from `@arkade-os/swap` and LNURL sending and receiving from `@arkade-os/lnurl-client`.
 
-## Current Status
+Requires Node.js `>=22.13.0 <27`. The package ships JavaScript ESM and generated TypeScript declarations.
 
-Implemented:
-- WDK `WalletManager` integration (`getAccount`, `getAccountByPath`, `getFeeRates`, `dispose`)
-- WDK account methods for send/sign/verify/quote, BIP-322 message signing, and read-only conversion
-- Destination auto-detection in `sendTransaction()` for Arkade addresses, BTC addresses, BOLT11 invoices, Lightning addresses, LNURL, and BIP21 URIs
-- Optional Lightning receive via `createLightningInvoice()` (Boltz reverse swap)
-- Optional Lightning send via `sendTransaction()` (Boltz submarine swap)
-- Transaction history via `getTransactionHistory()` (delegates to the SDK)
-- Subscription to incoming VTXOs via `subscribeToIncomingFunds()`
-
-## Account Model
-
-Each call to `getAccount(index)` returns one account derived at BIP-86 path `m/86'/<coin>/0'/0/<index>` (`coin = 0` for bitcoin, `1` for any other network). The index is just a key-derivation leaf — there is no per-index role.
-
-Every account exposes three receive surfaces from the same underlying wallet:
-
-| Surface | API | Used when |
-|---------|-----|-----------|
-| Arkade address (offchain) | `getAddress()` | Receiving VTXO transfers from other Arkade users |
-| Boarding address (on-chain) | `getBoardingAddress()` | Funding the wallet by depositing on-chain BTC |
-| Lightning invoice | `createLightningInvoice(amount, description?)` | Receiving Lightning payments via Boltz reverse swap |
-
-Lightning is only available when `swapProviderUrl` is set in the wallet config; otherwise `createLightningInvoice` throws. `getAddress()` always returns the Arkade address — do not use it as a QR code for Lightning receives.
-
-## Repository Structure
-
-```text
-arkade-wdk/
-├── src/
-│   ├── lib/                      # address, bip21, bolt11, lnurl, fees, formatting, send routing
-│   ├── wallet-manager-arkade.js  # WDK wallet manager implementation
-│   ├── wallet-account-arkade.js  # WDK account implementation
-│   ├── wallet-account-read-only-arkade.js  # WDK read-only account implementation
-│   ├── types.js                  # ArkadeWalletConfig type
-│   └── index.js                  # package exports
-├── packages/
-│   ├── pear-wrk-wdk/             # submodule: bare-kit worklet runtime (HRPC schema + handlers)
-│   └── wdk-react-native-provider/# submodule: React Native provider (WDK service, contexts, UI wiring)
-├── examples/
-│   └── wdk-starter-react-native/ # submodule: Expo example app
-├── patches/
-│   ├── pear-wrk-wdk.patch
-│   ├── wdk-react-native-provider.patch
-│   └── wdk-starter-react-native.patch
-└── scripts/
-    ├── setup-dev.js              # local dev setup helper
-    ├── apply-patches.js          # apply ./patches to each submodule
-    └── generate-patches.js       # regenerate ./patches from submodule diffs
-```
-
-## Installation
+## Install
 
 ```bash
 npm install @arkade-os/wdk @tetherto/wdk
 ```
 
-`@arkade-os/sdk` and `@arkade-os/boltz-swap` are not required as a direct install for normal usage of this adapter.
-They are pulled transitively by `@arkade-os/wdk`.
-If your app imports `@arkade-os/sdk` or `@arkade-os/boltz-swap` directly, add them explicitly to your app dependencies.
+The adapter installs its SDK, swap, LNURL, and Nostr dependencies. Add a package as a
+direct dependency when your application imports it directly.
 
-For local monorepo development with submodules and links:
+## Wallet accounts
 
-```bash
-npm run setup:dev
-```
+```javascript
+import WalletManagerArkade from '@arkade-os/wdk';
 
-## Quick Start
-
-```typescript
-import WdkManager from '@tetherto/wdk'
-import WalletManagerArkade from '@arkade-os/wdk'
-
-const seedPhrase = 'your twelve word seed phrase here'
-const wdk = new WdkManager(seedPhrase)
-
-wdk.registerWallet('bitcoin', WalletManagerArkade, {
+const manager = new WalletManagerArkade(seedPhrase, {
   arkServerUrl: 'https://arkade.computer',
-})
+});
+const account = await manager.getAccount(0);
 
-const account = await wdk.getAccount('bitcoin', 0)
+const address = await account.getAddress();
+const boardingAddress = await account.getBoardingAddress();
+const balance = await account.getBalance();
+const estimate = await account.quoteSendTransaction({ to: recipient, value: 1000n });
+const result = await account.sendTransaction({ to: recipient, value: 1000n });
 
-const arkAddress = await account.getAddress()
-const balance = await account.getBalance()
+await manager.dispose();
+```
 
-const quote = await account.quoteSendTransaction({
-  to: arkAddress,
+`getAccount(index)` derives `m/86'/<coin>/0'/0/<index>`, with coin `0` for Bitcoin
+mainnet and `1` for other networks. Each path has its own cached SDK wallet and
+account. Only seed-derived accounts are supported.
+
+The manager can also be registered with `@tetherto/wdk` through
+`wdk.registerWallet('bitcoin', WalletManagerArkade, config)`. Await the adapter
+manager's `dispose()` when complete teardown must finish before the process exits.
+
+## Sending and quotes
+
+`sendTransaction()` and `quoteSendTransaction()` use the SDK payment router and the
+LNURL client's rails. Supported targets include Arkade addresses, Bitcoin addresses,
+BOLT11 invoices, Lightning addresses, LNURLs, and BIP21 payment URIs.
+
+```javascript
+const { hash, fee } = await account.sendTransaction({
+  to: 'recipient@arkade.money',
   value: 1000n,
-})
-
-const tx = await account.sendTransaction({
-  to: arkAddress,
-  value: 1000n,
-})
-
-console.log({ balance, quoteFee: quote.fee, txid: tx.hash })
+});
 ```
 
-## Lightning and LNURL
+The return shapes follow WDK: sends return `{ hash, fee }`, and quotes return
+`{ fee }`, with fees in bigint satoshis. Quotes do not spend. A send executes one
+chosen quote and waits for its payment handle to settle. Settlement errors do not
+retry through another solver or payment rail.
 
-Create Lightning invoice (enabled only when `swapProviderUrl` is configured):
+`paymentTimeoutMs` bounds the caller's settlement wait (default: 120 seconds).
+A timeout does not cancel or reverse a payment. Settlement errors retain `paymentId` and
+`railId`; reconcile persisted swaps and transaction history before sending again.
+The returned `hash` is the rail's transaction ID, preimage, swap ID, or handle ID;
+it is not necessarily a Bitcoin transaction ID.
 
-```typescript
-const { invoice, paymentHash } = await account.createLightningInvoice(50_000, 'Payment for coffee')
-console.log(invoice) // BOLT11 invoice string
+Arkade transfers use the SDK's zero-fee offchain rail. Bitcoin payments use the
+SDK's collaborative exit rail and operator fee schedule. Solver-backed Lightning
+requires the solver configuration below. An LNURL offering a direct Arkade payment
+can be paid without a Lightning solver.
+
+The Arkade rails set the SDK's `maxChangeFee` to zero so a zero-fee quote cannot
+consume dust change as an unreported fee. The SDK must find valid change or refuse
+the send before submission, including asset and direct LNURL payments.
+
+```javascript
+await account.transfer({ token: assetId, recipient: arkadeAddress, amount: 100n });
+const estimate = await account.quoteTransfer({
+  token: assetId,
+  recipient: arkadeAddress,
+  amount: 100n,
+});
 ```
 
-Pay to Lightning address / LNURL:
+The SDK supplies the asset output's satoshi carrier and validates supported routes.
+The adapter does not estimate fees from fixed transaction sizes.
 
-```typescript
-await account.sendTransaction({ to: 'user@wallet.com', value: 1000n })
-```
+When `transactionMaxFee` is configured, onchain quotes freeze the BTC inputs and
+include their input, change, and exit fees before enforcing the cap. These exits
+use asset-free VTXOs so token holdings remain untouched. If all BTC is attached to
+assets, the wallet needs a separate BTC input for a capped exit. Capped exits use
+collaborative settlement; the SDK's boarding cosign fast path has no absolute fee
+limit in this version.
 
-## Arkade-Specific Account Methods
+## Solver discovery and Lightning
 
-The adapter does not expose the underlying `@arkade-os/sdk` wallet instance.
-Use the account methods instead:
+Configure a persistent swap repository for every account path. For example, in a
+browser with IndexedDB:
 
-```typescript
-const balance = await account.getBalance()
-const unsubscribe = await account.subscribeToIncomingFunds(() => {
-  console.log('New Arkade funds detected')
-})
-const history = await account.getTransactionHistory()
+```javascript
+import { IndexedDbAssetSwapRepository } from '@arkade-os/swap';
 
-unsubscribe()
-```
-
-## API Reference (Current)
-
-### WalletManagerArkade
-
-```typescript
-class WalletManagerArkade extends WalletManager {
-  // inherited from @tetherto/wdk-wallet WalletManager
-  static getRandomSeedPhrase(wordCount?: 12 | 24): string
-  static isValidSeedPhrase(seedPhrase: string): boolean
-
-  constructor(seed: string | Uint8Array, config?: ArkadeWalletConfig)
-  getAccount(index?: number): Promise<WalletAccountArkade>
-  getAccountByPath(path: string): Promise<WalletAccountArkade>
-  getFeeRates(): Promise<{ normal: bigint; fast: bigint }>
-  dispose(): Promise<void>
-}
-```
-
-### WalletAccountReadOnlyArkade
-
-```typescript
-class WalletAccountReadOnlyArkade {
-  getAddress(): Promise<string>
-  getBoardingAddress(): Promise<string>
-  getBalance(): Promise<bigint>
-  getTransactionHistory(): Promise<ArkTransaction[]>
-  verify(message: string, signature: string): Promise<boolean>
-  getTransactionReceipt(hash: string): Promise<unknown | null>
-  getTokenBalance(tokenAddress: string): Promise<bigint>
-  quoteSendTransaction(tx: Transaction): Promise<{ fee: bigint }>
-  quoteTransfer(options: TransferOptions): Promise<{ fee: bigint }>
-}
-```
-
-### WalletAccountArkade
-
-```typescript
-class WalletAccountArkade extends WalletAccountReadOnlyArkade {
-  readonly path: string             // full BIP-86 derivation path
-  readonly index: number            // path leaf (last segment)
-  readonly keyPair: { publicKey: Uint8Array; privateKey: Uint8Array | null }
-  readonly arkadeSwaps: ArkadeSwaps | null
-
-  sendTransaction(tx: Transaction): Promise<{ hash: string; fee: bigint }>
-  quoteSendTransaction(tx: Transaction): Promise<{ fee: bigint }>
-  transfer(options: TransferOptions): Promise<TransferResult>
-  sign(message: string): Promise<string>
-  subscribeToIncomingFunds(callback: (coins: IncomingFunds) => void): Promise<() => void>
-  toReadOnlyAccount(): Promise<WalletAccountReadOnlyArkade>
-  dispose(): void
-  createLightningInvoice(amount: number, description?: string): Promise<{ invoice: string; paymentHash: string }>
-  waitForLightningPayment(invoice: string): Promise<{ txid: string }>
-  getPendingLightningReceives(): Promise<PendingReverseSwap[]>
-  getPendingLightningSends(): Promise<PendingSubmarineSwap[]>
-  getSwapHistory(): Promise<(PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap)[]>
-  getLightningLimits(): Promise<LimitsResponse>
-  getLightningFees(): Promise<FeesResponse>
-}
-```
-
-### Package Exports
-
-`@arkade-os/wdk` exports three values:
-
-- `default` — `WalletManagerArkade`
-- `WalletAccountArkade`
-- `WalletAccountReadOnlyArkade`
-
-The modules under `src/lib/` (address detection, BIP21, BOLT11, LNURL, fees, formatting, send routing) back the destination auto-detection that `sendTransaction()` performs and are not part of the package's public API.
-
-## Configuration
-
-```typescript
-import type { ArkadeWalletConfig } from '@arkade-os/wdk'
-
-const config: ArkadeWalletConfig = {
+const manager = new WalletManagerArkade(seedPhrase, {
   arkServerUrl: 'https://arkade.computer',
-  // Optional: enables Lightning send/receive.
-  // swapProviderUrl: 'https://api.boltz.exchange',
-}
+  solver: (path) => ({
+    repository: new IndexedDbAssetSwapRepository(`wdk-swaps:${path}`),
+  }),
+});
+const account = await manager.getAccount(0);
+const markets = await account.swapClient.markets();
+const receive = await account.swapClient.receive({ via: 'lightning', amount: 50_000n });
+console.log(receive.artifact.bolt11);
 ```
 
-`ArkadeWalletConfig` extends the WDK `WalletConfig` and the `@arkade-os/sdk` `WalletConfig` (minus `identity`, which the manager fills in from the derived HD key) plus an optional `swapProviderUrl`.
+`@arkade-os/swap` supplies registry allowlists, verified signed solver cards,
+Nostr card discovery, and directed Nostr RFQ transport. `nostr-tools` is installed
+for those default transports. Optional `discovery`, `policy`, and corridor settings
+are passed to `createSwapClient()`; the adapter does not implement another discovery
+or recovery layer.
 
-Common fields:
+`account.swapClient` is available only when `solver` is configured. Use its
+`markets()`, `swaps()`, `onUpdate()`, and recovery APIs directly. The manager awaits
+its persisted-state readiness before returning the account. Keep each account's
+repository separate and retain it across restarts. The caller owns and closes an
+injected repository.
 
-| Field | Required                      | Purpose |
-|-------|-------------------------------|---------|
-| `arkServerUrl` | either this or `arkProvider`  | URL used to construct a `RestArkProvider`. |
-| `arkProvider` | either this or `arkServerUrl` | A pre-built `ArkProvider` instance — useful for tests or custom transports. |
-| `swapProviderUrl` | optional                      | Boltz API URL. Enables `createLightningInvoice`, Lightning send via `sendTransaction`, and the swap query methods. |
-| `storage` | optional                      | `{ walletRepository, contractRepository }`. Defaults to in-memory repositories; pass persistent ones (e.g. SQLite-backed) to keep VTXO state across restarts. |
-| `swapRepository` | optional                      | Boltz swap state storage. Forwarded into `ArkadeSwaps` when `swapProviderUrl` is set. |
+The adapter has no Boltz dependency or Boltz configuration. The former
+`swapProviderUrl`, `swapRepository`, `arkadeSwaps`, and Boltz-specific invoice,
+history, limits, and fee methods have been removed. Use `account.swapClient` for
+solver invoices and lifecycle queries.
 
-The manager fetches `arkProvider.getInfo()` once at construction time (with a single retry on failure) and reuses the result for fee rates, network detection, and wallet initialization. `Wallet.create` is wrapped in a 30-second timeout; the rejection mentions the unreachable Arkade server so misconfigurations surface quickly.
+## LNURL receiving
 
-## Temporary Workarounds
+`account.getLnurl()` returns the LNURL client's SDK facade. It exposes ownership
+discovery, registration, destination binding, address management, and payment reads
+without recreating the protocol in the adapter.
 
-### Arkade balances resolve on the RN side
+```javascript
+const lnurl = account.getLnurl();
+let receiver = await lnurl.owned();
+if (!receiver) receiver = await lnurl.claim({ username: 'your-available-name' });
 
-The normal WDK path for balances is: RN provider -> HRPC `getAddressBalance` -> worklet. Arkade now takes a different route: the RN provider initializes an `@arkade-os/wdk` account locally with Expo adapters and asks that account for its total balance.
-
-Current Arkade balance path:
-- RN provider -> `WalletAccountArkade.getBalance()`
-- `getBalance()` -> SDK `wallet.getBalance().total`
-- provider may subtract current boarding UTXOs via `getBoardingAddress()` and `esploraUrl` before presenting spendable Arkade / Lightning balance
-
-This keeps the SDK wallet encapsulated inside the account classes and leaves Arkade-specific balance shaping in the provider layer instead of expanding the wallet API.
-
-### Transaction history uses HRPC (not a workaround)
-
-Unlike balances, transaction history goes through the full HRPC path: RN provider -> HRPC `getTransactionHistory` -> worklet -> SDK `wallet.getTransactionHistory()`. The SDK returns `ArkTransaction[]` which is serialized as JSON through HRPC and mapped to the provider's `Transaction` interface on the RN side.
-
-## Git Submodules and Patches
-
-The `packages/` and `examples/` directories are git submodules pointing at upstream repositories we don't have write access to. Local modifications are stored as patch files under `./patches/` and applied on top of pinned upstream commits.
-
-### Submodules
-
-| Path | Pinned at |
-|------|-----------|
-| `packages/pear-wrk-wdk` | one commit before `v2.0.0-beta.1` (commit `ed8cd00`) |
-| `packages/wdk-react-native-provider` | one commit past `v1.0.0-beta.3` (commit `79462d4`) |
-| `examples/wdk-starter-react-native` | `develop` (commit `f010fda`) |
-
-Run `git submodule status` to confirm the pinned commit hashes in the parent repo.
-
-### After cloning
-
-Use the setup script — it initializes submodules, applies all patches, installs dependencies, builds the root package, and links everything for local development:
-
-```bash
-npm run setup:dev
+console.log(receiver.lnurl, receiver.lightningAddress);
+const request = await receiver.payRequest();
+const payments = await receiver.payments();
 ```
 
-> [!TIP]
-> To run the example app: `cd examples/wdk-starter-react-native && npm run android # or ios`
+Registration is explicit: constructing an account does not claim a name or create
+a receiver. `claim({ username, claimCode })` can claim a named address when the
+server permits it. `owned({ refresh: true })` rebinds owned addresses to the current
+wallet destinations. The facade also exposes `addresses()`, `capabilities()`,
+`sessionLnurl()`, and `token()`. A receiver supports `upgrade()`, `payments()`, and
+`sync()`; supply `lnurl.store` when integrating payment synchronization with local
+storage.
 
-If you only need to (re-)apply patches without running the rest of the setup:
+Check `capabilities()` before selecting an allocation mode. Server 0.6.0 supports
+named and random claims; nameless claims require a server advertising session
+allocation. An omitted claim name requests random allocation where supported.
 
-```bash
-node scripts/apply-patches.js          # apply all patches
-node scripts/apply-patches.js --check  # dry-run (verify they apply cleanly)
+Default services follow the wallet's operator network:
+
+| Network         | Service                             | Lightning address domain    |
+| --------------- | ----------------------------------- | --------------------------- |
+| Bitcoin mainnet | `https://lnurl.arkade.sh`           | `arkade.money`              |
+| Mutinynet       | `https://lnurl.mutinynet.arkade.sh` | `lnurl.mutinynet.arkade.sh` |
+
+Other networks require explicit LNURL configuration. Override `lnurl` to use a
+custom service, domain, transport, payment store, or advertised payment methods:
+
+```javascript
+const manager = new WalletManagerArkade(seedPhrase, {
+  arkServerUrl: 'https://arkade.computer',
+  lnurl: {
+    baseUrl: 'https://lnurl.arkade.sh',
+    domain: 'arkade.money',
+  },
+});
 ```
 
-### Editing a submodule
+`getLnurlClient()` exposes the package's low-level client for management and payer
+operations. `openLnurlSession(handlers, options?)` opens an interactive POST-SSE
+receiver session with an identity-derived token unless `options.token` is supplied.
+The required `onInvoiceRequest` handler answers or rejects payer requests through
+the package's responder. Call `session.reportSettled(preimage)` after verified local
+settlement and `session.close()` when finished. Account disposal closes its sessions
+and aborts pending session opens.
 
-Submodule working trees are kept dirty: the patches in `./patches/` are applied on top of the pinned upstream commits. To make a change:
+Sessions belong to the caller until `close()` or account disposal, including
+across stream disconnects and reconnects. LNURL server 0.6.0 accepts
+`reportSettled()` and exposes the result through `pollVerify()`, but does not emit
+the `invoice_settled` SSE frame consumed by `onSettled`.
 
-1. Edit files inside the submodule directly:
-   ```bash
-   cd packages/wdk-react-native-provider
-   # ... edit files ...
-   ```
+## Account APIs
 
-2. From the parent repo, regenerate the patch:
-   ```bash
-   cd ../..
-   node scripts/generate-patches.js
-   ```
-   The script defaults to the SHA the parent repo has pinned for each submodule, so the patch only captures your local changes — not divergence from upstream.
+The package exports `WalletManagerArkade` as its default, plus
+`WalletAccountArkade`, `WalletAccountReadOnlyArkade`, and the `ArkadeWalletConfig`
+type. Internal modules under `src/lib/` are not public exports.
 
-3. Commit the updated patch in the parent repo:
-   ```bash
-   git add patches/wdk-react-native-provider.patch
-   git commit -m "Update wdk-react-native-provider patch"
-   ```
+Both account types provide addresses, balance and token balance, transaction
+history, transaction reads, signature verification, and fee quotes. Full accounts
+also provide sending, asset transfers, BIP-322 signing, incoming-fund subscriptions,
+LNURL receiving, and `toReadOnlyAccount()`.
 
-### Provider build
+`getBalanceDetails()` returns the SDK's `WalletBalance`, including separate
+boarding, owned, available, and locked amounts. `getBalance()` remains the WDK
+bigint total; display its boarding component separately without adding it twice.
 
-After editing provider source, regenerate bundles and type definitions before committing:
+`toReadOnlyAccount()` uses the SDK's `toReadonly()` helper. It supplies no signing
+identity, payment execution methods, or swap client to the returned account.
+Await the returned view's `dispose()` when finished to close its SDK watchers.
+`signTransaction()` is unsupported because Arkade requires operator cosigning;
+use `sendTransaction()`.
 
-```bash
-cd packages/wdk-react-native-provider
-npm run prepare   # runs bob build + gen:secret-manager-bundle + gen:worker-bundle
-```
+`getTransaction(hash)` normalizes SDK history to WDK finality: settled entries are
+`confirmed`, and unsettled entries are `pending`. An unknown transaction throws
+`NoSuchElementError`. This does not claim Bitcoin finality. The legacy
+`getTransactionReceipt()` returns the native indexer response.
 
-This re-bundles the worklet (picking up any HRPC schema changes from `pear-wrk-wdk`) and type-checks with the stricter `bob build` settings.
+Await account or manager disposal to close sessions, drain swap work, and erase
+private key material. Manager disposal also closes the SDK wallets.
+Disposal drains an executing payment even if its caller's settlement wait timed
+out; private keys remain available until that native operation finishes.
 
-## Releasing to npm
+## Configuration and persistence
 
-Releases are driven from a local workstation by `scripts/release.js` (invoked through `npm run release`). There is no automated release pipeline.
+`ArkadeWalletConfig` combines WDK fee limits with SDK `WalletConfig` options except
+`identity`, which the adapter derives. `arkServerUrl` remains a convenience for an
+operator URL; custom SDK providers can be supplied for other transports.
 
-### Prerequisites
+| Field              | Purpose                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `storage`          | SDK repositories, or a `(path) => repositories` factory for isolated accounts; defaults to in-memory storage. |
+| `solver(path)`     | Per-account swap client configuration with an explicit persistent repository.                                 |
+| `lnurl`            | LNURL service, domain, client, payment store, and advertised methods.                                         |
+| `paymentTimeoutMs` | Positive integer settlement wait in milliseconds; defaults to 120,000.                                        |
 
-- npm account with access to the `@arkade-os` org
-- Logged in: `npm login`
-- Working tree on the commit you want to publish (the release script does not bump the version itself)
-
-### Steps
-
-1. Bump the version with `--no-git-tag-version` (the release script creates the tag itself; using plain `npm version` would create the tag twice and the script would refuse to run):
-   ```bash
-   npm version --no-git-tag-version patch   # or minor / major
-   git commit -am "Bump version"
-   git push
-   ```
-
-2. Run the release script:
-   ```bash
-   npm run release
-   ```
-   It reads the version from `package.json`, creates the `vX.Y.Z` tag locally, runs `npm publish` (which fires the `prepublishOnly` hook that regenerates type declarations in `types/`), and pushes the tag to `origin`. If publish fails the tag is removed so a retry can re-tag the same commit.
-
-Only `src/` and `types/` are included in the tarball (per the `files` field in `package.json`).
-
-## CI
-
-`.github/workflows/ci.yml` runs on every push and pull request targeting `master`. The job uses Node.js 22 and runs:
-
-```bash
-npm ci
-npm run lint    # eslint + tsc --noEmit via jsconfig.json
-npm test        # node --test src/__tests__/*.test.js
-```
-
-Tests use Node's built-in test runner — no extra framework or runtime dependency is required.
+In-memory wallet storage is session-local. Production applications should supply
+persistent SDK repositories as well as a persistent solver repository. Funding,
+accepted swaps, and recovery state must remain with the same account and selected
+solver across restarts.
 
 ## Development
 
 ```bash
 npm install
 npm run lint
-npm run format
+npm test
+npm run build:types
 ```
 
-Testing:
+Tests use Node's built-in test runner. Lint includes checked JavaScript via
+`jsconfig.json`. `build:types` generates declarations in ignored `types/`; there is
+no JavaScript compilation step. `npm run format` formats source files.
+
+The package pins SDK `0.5.7`, swap `0.1.7`, lnurl-client `0.9.4`, and nostr-tools
+`2.24.1`. Nostr is pinned to the swap package's exact peer version. Update those
+packages together and validate the generated declarations.
+
+The [funded regtest instructions](test/e2e/stack/README.md) start an isolated,
+version-pinned backend and run `npm run test:e2e`. This tests actual transfers,
+assets, boarding, onchain fees, Nostr discovery, Lightning, LNURL, and restart
+recovery with persistent SQLite state.
+
+## React Native submodules
+
+`packages/pear-wrk-wdk`, `packages/wdk-react-native-provider`, and
+`examples/wdk-starter-react-native` are independent git submodules. Their local
+integration changes are stored under `patches/`.
+
+The patches use persistent solver storage and expose reusable LNURL receiving in
+the example. Old swap tables are retained and are not interpreted as v2 records.
 
 ```bash
-npm test
+npm run setup:dev
+node scripts/apply-patches.js --check
 ```
+
+Setup initializes submodules, applies patches, installs dependencies, and links the
+packages. Verify the links and build commands in each submodule. Root Node tests
+do not validate Android, iOS, Bare, or Expo runtime behavior. After changing a
+submodule, regenerate its patch with `node scripts/generate-patches.js` and build
+the affected package before testing the example app.
+
+`npm run test:e2e:sample` runs the patched sample service and real HRPC bindings
+against the same regtest stack. It uses Node equivalents for device storage,
+crypto, and worklet loading. Build the provider worklets and export the Expo app
+separately; this harness does not replace an Android or iOS device run.
+
+## Releases
+
+`npm run release` runs the local release script. It publishes the current package
+version and creates/pushes its tag; `prepublishOnly` regenerates declarations.
+Version bumps, publication, and tag pushes are separate operator actions, not part
+of normal dependency installation or validation.
 
 ## License
 
 MIT
-
-## Resources
-
-- [WDK Documentation](https://docs.wallet.tether.io/sdk)
-- [Arkade SDK](https://github.com/arkade-os/ts-sdk)
-- [Arkade Documentation](https://docs.arkadeos.com)
-- [Boltz Exchange](https://boltz.exchange)

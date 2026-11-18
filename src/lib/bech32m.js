@@ -12,7 +12,6 @@
  *   1 byte version || 32 bytes serverPubKey || 32 bytes vtxoTaprootKey
  * The pkScript is `OP_1 OP_PUSHBYTES_32 <vtxoTaprootKey>` = `5120 || hex(...)`.
  */
-/* eslint-disable no-bitwise -- bech32m is bit-packed by definition */
 
 const BECH32M_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 const BECH32M_CONST = 0x2bc830a3;
@@ -109,4 +108,3 @@ export function arkAddressToPkScript(address) {
   const hex = vtxoTaprootKey.map((b) => b.toString(16).padStart(2, '0')).join('');
   return `5120${hex}`;
 }
-/* eslint-enable no-bitwise */

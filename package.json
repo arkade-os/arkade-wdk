@@ -14,8 +14,10 @@
   "scripts": {
     "test": "node --test src/__tests__/*.test.js",
     "test:watch": "node --test --watch src/__tests__/*.test.js",
+    "test:e2e": "node --experimental-sqlite --experimental-eventsource --test test/e2e/*.test.js",
+    "test:e2e:sample": "node --experimental-sqlite --experimental-eventsource test/e2e/sample-service.mjs",
     "typecheck": "tsc -p jsconfig.json --noEmit",
-    "build:types": "tsc -p tsconfig.json",
+    "build:types": "node scripts/build-types.js",
     "prepublishOnly": "npm run build:types",
     "lint": "eslint src --ext .js && npm run typecheck",
     "lint:fix": "eslint src --ext .js --fix",
@@ -35,25 +37,29 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@arkade-os/boltz-swap": "0.3.40",
-    "@arkade-os/sdk": "0.4.35",
-    "@scure/base": "^2.0.0",
-    "@scure/bip32": "^2.0.1",
-    "@tetherto/wdk-wallet": "^1.0.0-beta.5",
-    "light-bolt11-decoder": "^3.2.0",
+    "@arkade-os/lnurl-client": "0.9.4",
+    "@arkade-os/sdk": "0.5.7",
+    "@arkade-os/swap": "0.1.7",
+    "@scure/base": "2.4.0",
+    "@scure/bip32": "2.4.0",
+    "@tetherto/wdk-wallet": "1.0.0-beta.26",
+    "nostr-tools": "2.24.1",
     "sodium-universal": "^5.0.1"
   },
   "devDependencies": {
-    "@tetherto/wdk": "^1.0.0-beta.4",
-    "eslint": "^8.56.0",
+    "@eslint/js": "10.0.1",
+    "@tetherto/wdk": "1.0.0-beta.23",
+    "eslint": "10.15.0",
+    "globals": "17.14.0",
     "prettier": "^3.2.4",
-    "typescript": "^5.3.3"
+    "typescript": "7.0.2"
   },
   "files": [
     "src",
-    "types"
+    "types",
+    "!src/__tests__"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.13.0 <27"
   }
 }

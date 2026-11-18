@@ -1,0 +1,3 @@
+source_dir: src
+embedding_model: ollama/qwen3-embedding:0.6b
+embedding_dimensions: 1024
