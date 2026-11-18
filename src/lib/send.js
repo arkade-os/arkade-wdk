@@ -85,6 +85,15 @@ export function createReadOnlyPaymentRouter(wallet, arkInfo) {
   return router;
 }
 
+/** @param {number | bigint} amount */
+function safeOnchainSats(amount) {
+  const sats = Number(amount);
+  if (!Number.isSafeInteger(sats)) {
+    throw new RangeError('Onchain payment exceeds the safe integer satoshi range');
+  }
+  return sats;
+}
+
 /** @param {() => Promise<import('@arkade-os/sdk').FeeInfo>} feeInfo
  * @returns {import('@arkade-os/sdk').PaymentRail} */
 function cappedOnchainRail(feeInfo) {
@@ -112,20 +121,25 @@ function cappedOnchainRail(feeInfo) {
       const dust = BigInt(
         /** @type {import('@arkade-os/sdk').Wallet} */ (ctx.wallet).dustAmount ?? 330
       );
-      let target = resolveSendAmount(rail.id, req.raw, req.amount);
+      let target = BigInt(resolveSendAmount(rail.id, req.raw, req.amount));
       for (;;) {
         const selectedVtxos =
           /** @type {import('@arkade-os/sdk').NormalizedExtendedVirtualCoin[]} */ (
-            selectVirtualCoins(candidates, target).inputs
+            selectVirtualCoins(candidates, safeOnchainSats(target)).inputs
           );
-        const quote = await fixedRail.quote({ ...req, selectedVtxos }, ctx);
         const available = selectedVtxos.reduce((sum, coin) => sum + BigInt(coin.value), 0n);
-        const change = available - BigInt(quote.total);
+        safeOnchainSats(available);
+        const quote = await fixedRail.quote({ ...req, selectedVtxos }, ctx);
+        const total = BigInt(safeOnchainSats(quote.total));
+        const change = available - total;
         if (change === 0n || change >= dust) return quote;
-        if (change > 0n && selectedVtxos.length === candidates.length) {
+        if (selectedVtxos.length === candidates.length) {
+          if (change < 0n) {
+            throw new Error('Insufficient funds to cover the onchain payment and fees');
+          }
           throw new DustChangeError(change, dust);
         }
-        target = change > 0n ? Number(available) + 1 : quote.total;
+        target = change > 0n ? available + 1n : total;
       }
     },
   };

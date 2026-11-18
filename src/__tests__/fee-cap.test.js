@@ -294,6 +294,36 @@ describe('solver funding change fees', () => {
 });
 
 describe('onchain fee caps', () => {
+  it('rejects a rounded selection instead of attempting to quote the same inputs again', async () => {
+    const source = wallet();
+    const coins = await source.getSpendableVtxos();
+    coins[0].value = Number.MAX_SAFE_INTEGER - 100;
+    coins[1].value = 600;
+    source.getAddress = mock.fn(async () => {
+      assert.ok(source.getAddress.mock.callCount() <= 1, 'selected the same inputs again');
+      return address;
+    });
+    await assert.rejects(
+      send({
+        router: createPaymentRouter(source),
+        to: destination,
+        amount: BigInt(Number.MAX_SAFE_INTEGER),
+        maxFee: 550n,
+      }),
+      /safe integer satoshi range/
+    );
+    assert.equal(source.settle.mock.callCount(), 0);
+  });
+
+  it('rejects exhausted inputs that cover the amount but not its fees', async () => {
+    const source = wallet();
+    await assert.rejects(
+      send({ router: createPaymentRouter(source), to: destination, amount: 1900n, maxFee: 550n }),
+      /Insufficient funds to cover the onchain payment and fees/
+    );
+    assert.equal(source.settle.mock.callCount(), 0);
+  });
+
   it('adds another SDK-selected input when the first selection leaves dust change', async () => {
     const source = wallet();
     const coins = await source.getSpendableVtxos();

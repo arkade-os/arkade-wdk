@@ -138,6 +138,31 @@ describe('LNURL receiver', () => {
     );
   });
 
+  it('stops Bare token derivation when disposal wins the public-key lookup', async (t) => {
+    const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    t.mock.getter(globalThis, 'crypto', () => ({ getRandomValues }));
+    const { account, identity, fetchImpl } = accountWithServer(() => json(registered));
+    t.after(() => account.dispose());
+    const publicKey = await identity.compressedPublicKey();
+    let finish;
+    t.mock.method(identity, 'compressedPublicKey', () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+
+    const claiming = account.getLnurl().claim({ username: 'alice' });
+    const rejected = assert.rejects(claiming, /disposed/);
+    await new Promise(setImmediate);
+    assert.equal(typeof finish, 'function');
+    await account.dispose();
+    finish(publicKey);
+    await rejected;
+
+    assert.equal(fetchImpl.mock.callCount(), 0);
+    assert.deepEqual(account.keyPair.privateKey, new Uint8Array(32));
+  });
+
   it('discovers an existing owned receiver without registration or identity writes', async () => {
     const { account, fetchImpl } = accountWithServer(() =>
       json([

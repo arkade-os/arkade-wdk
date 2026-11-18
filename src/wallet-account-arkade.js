@@ -1,7 +1,7 @@
 import { BIP322, SingleKey } from '@arkade-os/sdk';
 import { UnsupportedOperationError } from '@tetherto/wdk-wallet';
 import { createLnurlClient } from '@arkade-os/lnurl-client';
-import { arkadeLnurl } from '@arkade-os/lnurl-client/arkade';
+import { arkadeLnurl, DEFAULT_RAIL_PRIORITY } from '@arkade-os/lnurl-client/arkade';
 import { HDKey } from '@scure/bip32';
 import { sodium_memzero } from 'sodium-universal';
 import { createPaymentRouter, send } from './lib/send.js';
@@ -36,26 +36,25 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
       solver: services.solver,
       client: this._lnurlClient ?? undefined,
     });
-    /** @private */
+    /** @private @type {import('@arkade-os/lnurl-client/arkade').ArkadeLnurl | null} */
     this._lnurl = services.lnurl
-      ? arkadeLnurl({
-          ...services.lnurl,
-          wallet: lnurlWallet(wallet, keyPair.privateKey),
-          client: this._lnurlClient ?? undefined,
-          router: this._paymentRouter,
-        })
+      ? {
+          ...arkadeLnurl({
+            ...services.lnurl,
+            wallet: lnurlWallet(wallet, keyPair.privateKey, () => this._disposeCheck()),
+            client: this._lnurlClient ?? undefined,
+          }),
+          // lnurl-client 0.9.4 adds its own payer transport when its router is first used.
+          router: () => this._paymentRouter,
+          options: (target, amount, prefs) =>
+            this._paymentRouter.options(
+              typeof amount === 'number'
+                ? { raw: target.trim(), amount }
+                : { raw: target.trim(), unitAmount: amount },
+              { priority: DEFAULT_RAIL_PRIORITY, ...prefs }
+            ),
+        }
       : null;
-    if (this._lnurl) {
-      // lnurl-client 0.9.4 otherwise replaces our injected payer transport on first use.
-      this._lnurl.router = () => this._paymentRouter;
-      this._lnurl.options = (target, amount, prefs) =>
-        this._paymentRouter.options(
-          typeof amount === 'number'
-            ? { raw: target.trim(), amount }
-            : { raw: target.trim(), unitAmount: amount },
-          prefs
-        );
-    }
     /** @private */
     this._controller = new AbortController();
     /** @private @type {Set<import('@arkade-os/lnurl-client').LnurlSession>} */
@@ -170,6 +169,13 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
     ]);
     /** @type {import('@arkade-os/lnurl-client').LnurlSession | undefined} */
     let opened;
+    const closeOnAbort = () => {
+      try {
+        opened?.close();
+      } catch {
+        // A transport close failure must not interrupt account teardown or replace cancellation.
+      }
+    };
     try {
       throwIfAborted(signal);
       const token = options.token ?? (await withAbort(this.getLnurl().token(), signal));
@@ -178,19 +184,18 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
         .openSession({ ...options, token, signal }, handlers)
         .then((session) => {
           const close = session.close.bind(session);
-          const onAbort = () => session.close();
           let closed = false;
           session.close = () => {
             if (closed) return;
             closed = true;
             this._sessions.delete(session);
-            signal.removeEventListener('abort', onAbort);
+            signal.removeEventListener('abort', closeOnAbort);
             dispose();
             close();
           };
           opened = session;
-          signal.addEventListener('abort', onAbort, { once: true });
-          if (signal.aborted) session.close();
+          signal.addEventListener('abort', closeOnAbort, { once: true });
+          if (signal.aborted) closeOnAbort();
           return session;
         });
       const session = await withAbort(opening, signal);
@@ -199,7 +204,7 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
       return session;
     } catch (error) {
       dispose();
-      opened?.close();
+      closeOnAbort();
       throw error;
     }
   }
@@ -241,9 +246,10 @@ export class WalletAccountArkade extends WalletAccountReadOnlyArkade {
 /**
  * @param {import('@arkade-os/sdk').Wallet} wallet
  * @param {Uint8Array | null} privateKey
+ * @param {() => void} checkLive
  * @returns {import('@arkade-os/lnurl-client/arkade').LnurlWallet}
  */
-function lnurlWallet(wallet, privateKey) {
+function lnurlWallet(wallet, privateKey, checkLive) {
   const identity = wallet.identity;
   if (!privateKey || globalThis.crypto?.subtle || !(identity instanceof SingleKey)) return wallet;
 
@@ -254,8 +260,10 @@ function lnurlWallet(wallet, privateKey) {
       compressedPublicKey: () => identity.compressedPublicKey(),
       // Bare lacks SubtleCrypto for the SDK's async ECDSA. LNURL needs a deterministic compact signature.
       async signMessage(message, type) {
+        checkLive();
         if (type !== 'ecdsa') return identity.signMessage(message, type);
         const publicKey = await identity.compressedPublicKey();
+        checkLive();
         const key = new HDKey({ privateKey });
         try {
           if (!key.publicKey?.every((byte, i) => byte === publicKey[i])) {

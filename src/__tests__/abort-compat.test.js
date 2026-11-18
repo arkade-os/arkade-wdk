@@ -239,6 +239,19 @@ describe('portable LNURL session cancellation', () => {
     assert.equal(close.mock.callCount(), 1);
   });
 
+  it('contains a transport close failure during account abort', async () => {
+    const close = mock.fn(() => {
+      throw new Error('close failed');
+    });
+    const { account, signal } = sessionAccount(async () => ({ close }));
+    await account.openLnurlSession(handlers);
+    await account.dispose();
+    await tick();
+    assert.equal(close.mock.callCount(), 1);
+    assert.equal(signal.listeners.size, 0);
+    assert.equal(account._sessions.size, 0);
+  });
+
   it('closes a session when abort races its delivery to the caller', async () => {
     const caller = new BasicSignal();
     const close = mock.fn();
