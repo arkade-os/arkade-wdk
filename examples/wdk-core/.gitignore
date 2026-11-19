@@ -1,0 +1,6 @@
+.wdk/
+.wdk-bundle/
+.wdk-mobile/
+.expo/
+android/
+ios/

@@ -264,6 +264,9 @@ recovery with persistent SQLite state.
 
 ## React Native submodules
 
+The [WDK Core regtest example](examples/wdk-core/README.md) uses the newer
+module API and an Expo app. It is separate from the patched starter below.
+
 `packages/pear-wrk-wdk`, `packages/wdk-react-native-provider`, and
 `examples/wdk-starter-react-native` are independent git submodules. Their local
 integration changes are stored under `patches/`.
