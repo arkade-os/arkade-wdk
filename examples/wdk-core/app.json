@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Arkade WDK Core Regtest",
+    "slug": "arkade-wdk-core-regtest",
+    "scheme": "arkadewdkcoreregtest",
+    "android": { "package": "money.arkade.wdkcoreregtest" },
+    "ios": { "bundleIdentifier": "money.arkade.wdkcoreregtest" },
+    "plugins": [
+      "./plugins/withWdkCoreBareKit.cjs",
+      ["expo-local-authentication", { "faceIDPermission": "Unlock your local regtest wallet." }]
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "arkade-wdk-core-example",
+  "private": true,
+  "version": "0.0.0",
+  "main": "index.js",
+  "scripts": {
+    "bundle": "wdk-worklet-bundler generate",
+    "bundle:mobile": "node plugins/bundle-mobile.cjs",
+    "prebuild:android": "npm run bundle:mobile && expo prebuild --platform android --template expo-template-bare-minimum@56.0.38 --no-install",
+    "start": "expo start --dev-client",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run bundle && node smoke.cjs"
+  },
+  "engines": {
+    "node": "^22.21.0 || >=24.9.0 <27"
+  },
+  "dependencies": {
+    "@arkade-os/sdk": "0.5.7",
+    "@arkade-os/wdk": "file:../..",
+    "@arkade-os/wdk-core-example-module": "file:./arkade-module",
+    "@tetherto/pear-wrk-wdk": "1.0.0-beta.15",
+    "@tetherto/wdk": "1.0.0-beta.23",
+    "@tetherto/wdk-react-native-core": "1.0.0-beta.24",
+    "@tetherto/wdk-wallet-btc": "1.0.0-beta.18",
+    "bare-node-runtime": "1.5.5",
+    "expo": "56.0.24",
+    "expo-crypto": "56.0.5",
+    "expo-dev-client": "56.0.28",
+    "expo-local-authentication": "56.0.5",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-bare-kit": "0.17.1",
+    "react-native-nitro-modules": "0.36.1",
+    "react-native-safe-area-context": "~5.7.0"
+  },
+  "devDependencies": {
+    "@tetherto/wdk-worklet-bundler": "1.0.0-beta.17",
+    "@types/react": "~19.2.0",
+    "bare-buffer": "3.7.3",
+    "bare-module": "7.5.2",
+    "bare-net": "2.3.3",
+    "bare-runtime": "1.38.0",
+    "bare-url": "2.5.8",
+    "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "expo": "56.0.24",
+    "react": "19.2.3",
+    "react-native": "0.85.3"
+  }
+}
